@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { loadConfig } from '../src/config.js'
 
 const validEnvironment = {
+  JWT_ACCESS_SECRET: 'test-only-replace-with-random-secret-material',
   MONGODB_URI: 'mongodb://user:password@localhost:27017/freshprawns?authSource=admin',
 }
 
@@ -30,5 +31,11 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ ...validEnvironment, CORS_ORIGINS: 'not-an-origin' })).toThrow(/valid origins/)
     expect(() => loadConfig({ ...validEnvironment, PORT: '70000' })).toThrow(/PORT/)
     expect(() => loadConfig({ ...validEnvironment, NODE_ENV: 'staging' })).toThrow(/NODE_ENV/)
+  })
+
+  it('requires a sufficiently strong access-token signing secret and bounded lifetimes', () => {
+    expect(() => loadConfig({ ...validEnvironment, JWT_ACCESS_SECRET: 'too-short' })).toThrow(/JWT_ACCESS_SECRET/)
+    expect(() => loadConfig({ ...validEnvironment, JWT_ACCESS_TTL_SECONDS: '30' })).toThrow(/JWT_ACCESS_TTL_SECONDS/)
+    expect(() => loadConfig({ ...validEnvironment, REFRESH_TOKEN_TTL_DAYS: '120' })).toThrow(/REFRESH_TOKEN_TTL_DAYS/)
   })
 })

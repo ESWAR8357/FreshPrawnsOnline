@@ -7,6 +7,7 @@ import { loadConfig } from '../src/config.js'
 const config = loadConfig({
   MONGODB_URI: 'mongodb://localhost:27017/freshprawns?authSource=admin',
   NODE_ENV: 'test',
+  JWT_ACCESS_SECRET: 'test-only-replace-with-random-secret-material',
   LOG_LEVEL: 'silent',
 })
 

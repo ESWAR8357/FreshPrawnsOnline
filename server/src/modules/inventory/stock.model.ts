@@ -17,7 +17,16 @@ const stockSchema = new Schema({
     },
     default: 0,
   },
+  reservations: {
+    type: [{
+      orderId: { type: Schema.Types.ObjectId, ref: 'Order', required: true },
+      grams: { type: Number, required: true, min: 1, validate: Number.isSafeInteger },
+    }],
+    default: [],
+  },
 }, { timestamps: true, versionKey: false })
+
+stockSchema.index({ 'reservations.orderId': 1 })
 
 const stockMovementSchema = new Schema({
   productId: { type: Schema.Types.ObjectId, ref: 'Product', required: true },

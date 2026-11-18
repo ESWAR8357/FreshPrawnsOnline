@@ -106,18 +106,21 @@ async function seed(): Promise<void> {
         { upsert: true, new: true, runValidators: true },
       )
 
-      await Promise.all([
-        DailyPrice.findOneAndUpdate(
-          { productId: product._id, effectiveFrom },
-          { $set: { pricePerKgPaise, effectiveTo } },
-          { upsert: true, new: true, runValidators: true },
-        ),
-        Stock.findOneAndUpdate(
-          { productId: product._id },
-          { $set: { onHandGrams, reservedGrams: 0 } },
-          { upsert: true, new: true, runValidators: true },
-        ),
-      ])
+      const stock = await Stock.findOne({ productId: product._id })
+      if (stock) {
+        stock.onHandGrams = onHandGrams
+        stock.reservedGrams = 0
+        stock.reservations.splice(0, stock.reservations.length)
+        await stock.save()
+      } else {
+        await Stock.create({ productId: product._id, onHandGrams, reservedGrams: 0 })
+      }
+
+      await DailyPrice.findOneAndUpdate(
+        { productId: product._id, effectiveFrom },
+        { $set: { pricePerKgPaise, effectiveTo } },
+        { upsert: true, new: true, runValidators: true },
+      )
     }
 
     console.info(`Seeded ${samples.length} clearly marked sample products and today's sample prices/stock.`)

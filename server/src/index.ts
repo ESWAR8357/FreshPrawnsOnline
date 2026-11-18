@@ -3,6 +3,7 @@ import pino from 'pino'
 import { buildApp } from './app.js'
 import { loadConfig } from './config.js'
 import { connectDatabase, disconnectDatabase } from './database.js'
+import { MongoOrdersService } from './modules/orders/orders.service.js'
 
 const config = loadConfig()
 const logger = pino({
@@ -17,7 +18,16 @@ try {
   process.exit(1)
 }
 
-const app = buildApp(config)
+const ordersService = new MongoOrdersService()
+try {
+  await ordersService.recoverIncompleteOperations()
+} catch (error) {
+  logger.error({ errorName: error instanceof Error ? error.name : 'UnknownError' }, 'Incomplete order stock operations could not be recovered; API startup aborted')
+  await disconnectDatabase()
+  process.exit(1)
+}
+
+const app = buildApp(config, undefined, undefined, { orders: ordersService })
 const server = createServer(app)
 
 server.listen(config.PORT, config.HOST, () => {

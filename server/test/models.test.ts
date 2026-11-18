@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { DailyPrice } from '../src/modules/pricing/daily-price.model.js'
 import { Product } from '../src/modules/products/product.model.js'
 import { Stock } from '../src/modules/inventory/stock.model.js'
+import { Order } from '../src/modules/orders/order.model.js'
+import { RefreshSession } from '../src/modules/users/refresh-session.model.js'
 import { User } from '../src/modules/users/user.model.js'
 
 describe('foundation model validation and indexes', () => {
@@ -64,6 +66,18 @@ describe('foundation model validation and indexes', () => {
     expect(stock.validateSync()?.errors.reservedGrams).toBeDefined()
   })
 
+  it('stores stock reservation ownership with integer gram quantities', () => {
+    const stock = new Stock({
+      productId: '507f1f77bcf86cd799439011',
+      onHandGrams: 1000,
+      reservedGrams: 500,
+      reservations: [{ orderId: '507f1f77bcf86cd799439012', grams: 500.5 }],
+    })
+
+    expect(stock.validateSync()?.errors['reservations.0.grams']).toBeDefined()
+    expect(Stock.schema.indexes()).toContainEqual([{ 'reservations.orderId': 1 }, { background: true }])
+  })
+
   it('stores prices as integer paise', () => {
     const price = new DailyPrice({
       productId: '507f1f77bcf86cd799439011',
@@ -72,5 +86,32 @@ describe('foundation model validation and indexes', () => {
     })
 
     expect(price.validateSync()?.errors.pricePerKgPaise).toBeDefined()
+  })
+
+  it('hides refresh-token hashes and expires refresh sessions by TTL', () => {
+    expect(RefreshSession.schema.path('tokenHash')?.options.select).toBe(false)
+    expect(RefreshSession.schema.indexes()).toContainEqual([
+      { expiresAt: 1 },
+      { expireAfterSeconds: 0, background: true },
+    ])
+  })
+
+  it('requires customer ownership and durable reservation state for orders', () => {
+    const order = new Order({
+      customerName: 'Ananya Rao',
+      customerPhone: '+919876543210',
+      address: { line: '12 Lake View Road', locality: 'Banjara Hills', city: 'Hyderabad', postalCode: '500034' },
+      deliveryMethod: 'shop',
+      items: [],
+      subtotalPaise: 0,
+      deliveryFeePaise: 4000,
+      totalPaise: 4000,
+      idempotencyKey: 'key',
+      requestFingerprint: 'fingerprint',
+    })
+    const errors = order.validateSync()?.errors
+
+    expect(errors?.customerUserId).toBeDefined()
+    expect(Order.schema.path('stockReservationState')?.options.enum).toContain('reserving')
   })
 })

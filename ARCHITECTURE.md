@@ -70,7 +70,7 @@ Only add modules when their phase is approved. A folder or interface for a futur
 
 ### Phase 1 — Frontend-only prototype (existing)
 
-Preserve the current storefront, responsive design, sample catalogue/orders, cleaned/uncleaned options, weight and quantity choices, cart, checkout UI, address placeholder, tracking UI, contact area, and admin demo. Mock values and local state are clearly not live commerce data. Do not add a real payment, map, delivery, inventory, order, or authentication integration.
+Preserve the current storefront, responsive design, sample catalogue, cleaned/uncleaned options, weight and quantity choices, cart, checkout UI, address placeholder, tracking UI, contact area, and admin dashboard. The initial Phase 1 UI used mock data; current product reads, customer accounts, checkout/orders, tracking, protected admin order status, and manual delivery assignment are API-backed. Cart state stays local. No payment, maps, notifications, or delivery-provider integration is enabled.
 
 ### Phase 2 — Planning and architecture only
 
@@ -82,20 +82,21 @@ The foundation now lives in `server/`, independently of the React frontend. It u
 
 Focused API tests run with Supertest and an injected MongoDB health state without connecting to a database. The live service requires a MongoDB connection at startup and initializes the declared indexes after connecting. The local Compose MongoDB is standalone and does not provide multi-document transactions. See `README.md` for setup and the transaction/fallback strategy.
 
-This foundation does not implement business endpoints, authentication/session flows, role enforcement, checkout, inventory updates, payment, maps, notifications, or delivery-provider calls. The Phase 1 frontend continues to use mock data. CI setup and broader MongoDB integration tests remain follow-up work.
+The backend foundation is followed by the current account/order implementation described below. Payments, maps, notifications, provider delivery, and admin product/pricing/stock writes remain out of scope. CI setup and live MongoDB integration tests remain follow-up work.
 
 ### Later reviewed feature phases
 
-Implement small vertical slices, with tests and human review:
+Implemented vertical slices and remaining work:
 
-1. Public product read APIs with effective-dated prices, preparation options, and stock availability are implemented; admin-managed product and price writes still require authentication.
-2. Authenticated stock-by-weight adjustments, append-only movement records, reservation/release behavior, and concurrency controls.
-3. Customer/admin authentication, refresh-token lifecycle, Argon2 hashes, and role-based authorization.
-4. Server-backed cart/quote and idempotent order creation with server-calculated prices, fees, and stock checks.
-5. Order operations, safe public tracking, status history, and shop-person delivery assignment.
-6. Independent third-party delivery adapter, then provider-approved integrations only after explicit owner approval.
-7. Provider-independent payments, notifications, maps/location, and image storage; sandbox first and live operation only after approval.
-8. Gradual frontend integration using TanStack Query and React Hook Form/Zod while preserving responsive UI and accessible loading, error, empty, and success states.
+1. **Implemented:** Public product read APIs with effective-dated prices, preparation options, and available stock.
+2. **Implemented:** Customer-only registration, login/logout, Argon2id hashes, short-lived JWT access tokens, rotating opaque refresh tokens, and database-checked customer/admin authorization. Admin accounts are created by an interactive CLI, never by public registration.
+3. **Implemented:** Customer checkout/order creation with server-calculated prices and fees, idempotency, conditional per-product stock reservation, order ownership reads, and admin status transitions.
+4. **Implemented:** Frontend account, API-backed checkout, order tracking, and protected admin order/status views. Cart remains local to the browser.
+5. **Implemented: Manual delivery assignment (current feature phase):** Admins may assign a shop delivery person or record a third-party method and reference manually. Delivery status transitions are validated; customer order responses expose only the assigned contact or service/reference needed for tracking. No provider is contacted.
+6. **Remaining:** Admin product, daily price, and stock writes; stock movement APIs; order status event history; richer customer account/order history.
+7. **Later approved work:** Independent third-party delivery adapter and provider integrations after explicit owner approval.
+8. **Later approved work:** Provider-independent payments, notifications, maps/location, and image storage; sandbox first and live operation only after approval.
+9. **Remaining frontend stack adoption:** TypeScript, TanStack Query, React Hook Form/Zod, and React Testing Library; preserve current responsive UI and accessible loading, error, empty, and success states.
 
 ## Domain collections and design
 
@@ -105,11 +106,11 @@ Use Mongoose schemas with explicit validation and collection-level indexes. Stor
 - **refreshSessions:** store only a hash of each opaque refresh token, user, expiry, rotation/revocation state, and device/session metadata needed for security. Rotate on use, detect reuse, and revoke a token family on replay.
 - **products:** stable slug, name/description, size/category, active state, preparation-option references/settings, image reference, and timestamps.
 - **dailyPrices:** product, integer paise per kg, effective interval, actor, and audit timestamps. Preserve history; do not overwrite a price used by an existing order.
-- **stock:** per-product on-hand/reserved integer grams and version/update metadata. Pair balance updates with append-only **stockMovements** (signed delta, reason, actor, reference, timestamp).
+- **stock:** per-product on-hand/reserved integer grams and a per-order reservation ledger. Pair balance updates with append-only **stockMovements** (signed delta, reason, actor, reference, timestamp).
 - **carts (optional):** customer or short-lived guest cart and item selections. Treat it as a convenience only; recalculate price and validate stock when quoting and placing an order.
-- **orders:** customer/contact and address snapshot, immutable item/preparation/weight/quantity/price/fee snapshots, integer subtotal/delivery/total paise, status, opaque tracking token hash, timestamps, and idempotency metadata.
+- **orders:** customer/contact and address snapshot, immutable item/preparation/weight/quantity/price/fee snapshots, integer subtotal/delivery/total paise, status, durable stock-operation state, timestamps, and customer-scoped idempotency metadata.
 - **orderEvents:** append-only status and administrative event history with actor and timestamp.
-- **deliveryAssignments:** order, method (`SHOP` or `THIRD_PARTY`), assignment/status, internal assignee or provider-neutral reference, and timestamps. Do not store provider credentials here.
+- **orders.deliveryAssignment (embedded):** Phase 5 assignment data stays in the order document so assignment/status changes are atomic for that order. It records method (`shop` or `third_party`), progress status, shop person contact or manually entered third-party label/reference/admin-only details. Do not store provider credentials here; a separately indexed collection can be considered if a later audit/history requirement justifies it.
 - **idempotencyRecords / outbox (as needed):** unique idempotency key and request fingerprint; durable intent for reliable internal follow-up work when a multi-document transaction cannot be used.
 
 Indexes to plan and test include: normalized user login identifier (unique), product slug (unique), product active/category lookup, daily price by product and effective time, stock by unique product ID, order by status/created time and customer/date, unique idempotency key, unique tracking-token hash, and event/assignment history by order and time. Avoid storing unnecessary personal data in indexes or public API responses.
@@ -138,33 +139,35 @@ These are planned contracts; the public product read endpoints listed below are 
 
 - `GET /api/v1/health` — process/readiness status with dependency state clearly distinguished.
 - `GET /api/v1/products` and `GET /api/v1/products/:slug` — active products and current effective prices, preparation options, and available stock.
-- `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `POST /api/v1/auth/refresh`, `POST /api/v1/auth/logout` — only if the owner chooses customer accounts; otherwise provide a carefully designed guest-checkout flow.
+- `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `POST /api/v1/auth/refresh`, `POST /api/v1/auth/logout`, `GET /api/v1/auth/me` — implemented for customer accounts; public registration cannot grant admin roles.
 - `GET/POST/PATCH/DELETE /api/v1/cart` — only if a persistent server-side cart is approved.
-- `POST /api/v1/checkout/quote` — validate requested items and return a server-calculated quote; a quote is not stock reservation unless stated.
-- `POST /api/v1/orders` — validate current server prices/options/stock, apply idempotency, and create/reserve the order.
-- `GET /api/v1/orders/track/:token` — expose only limited status and delivery information via an unguessable token.
+- `POST /api/v1/orders` — implemented; validate current server prices/options/stock, apply idempotency, and reserve stock. No quote API is currently provided.
+- `GET /api/v1/orders`, `GET /api/v1/orders/:id` — customer-scoped; admins can read recent orders.
 
 ### Admin
 
-- `POST /api/v1/admin/auth/login`, `/refresh`, `/logout`, `GET /api/v1/admin/auth/me`.
+- Admins use the same `/api/v1/auth/*` endpoints as customers; role authorization is enforced from current MongoDB account state on every protected request.
 - `POST/GET/PATCH /api/v1/admin/products` and `/api/v1/admin/products/:productId` (planned; require admin authentication).
 - `POST /api/v1/admin/products/:productId/prices` — append a new effective-dated price (planned; require admin authentication).
 - `GET /api/v1/admin/stock`, `POST /api/v1/admin/stock/:productId/adjustments` (planned; require admin authentication).
-- `GET /api/v1/admin/orders`, `GET /api/v1/admin/orders/:orderId`.
-- `PATCH /api/v1/admin/orders/:orderId/status` with explicit transition rules.
-- `PATCH /api/v1/admin/orders/:orderId/delivery` for internal assignments or an approved adapter.
+- `GET /api/v1/orders` — returns recent orders to admins.
+- `PATCH /api/v1/orders/:id/status` — implemented with server-side role checks and explicit transition rules.
+- `PATCH /api/v1/orders/:id/delivery` — implemented, admin-only; saves shop person contact or manually entered third-party label/reference/details. No external provider is called.
+- `PATCH /api/v1/orders/:id/delivery/status` — implemented, admin-only; validates manual delivery progress transitions.
+- `PATCH /api/v1/orders/:id/status` — an order can move to `out_for_delivery` only after a manual delivery assignment; delivery completion/cancellation stays coupled to the existing stock-consumption/release behavior.
 
 Validate params, query, headers, and body with Zod at the API boundary. Document stable request/response and error shapes in OpenAPI. Never accept browser-supplied role, trusted prices/totals, payment status, delivery-provider status, or available stock.
 
 ## Authentication and security requirements
 
 - Hash passwords with Argon2id and appropriate deployment-calibrated parameters; never store or log plaintext passwords.
-- Use short-lived access JWTs with minimal claims, issuer/audience/expiry checks, key rotation planning, and revocation/session checks where required.
+- Use short-lived access JWTs with minimal claims, issuer/audience/expiry checks, key rotation planning, and current account-state checks.
 - Use opaque, high-entropy refresh tokens stored only as hashes server-side; rotate on every refresh, detect reuse, support revocation/expiry, and protect browser delivery using an appropriately configured Secure, HttpOnly, SameSite cookie plus CSRF defenses. Decide how non-browser clients are supported before finalizing token transport.
 - Apply customer/admin role authorization on every protected route. The admin UI is not a security boundary.
+- Require admin authorization for every delivery assignment or delivery progress write. Validate method-specific fields and status transitions server-side; never accept provider-reported status from a browser or external service in this phase.
 - Use explicit CORS origins, secure headers, request size/time limits, conservative rate limits, request IDs, centralized safe error responses, and structured logs with sensitive fields redacted.
 - Validate all values server-side; enforce allowed weights, quantity limits, fees, current prices, stock, status transitions, and request idempotency.
-- Keep public tracking responses minimal; use unguessable tracking tokens and never return full phone/address or internal assignment notes publicly.
+- Keep order delivery responses role-appropriate: authenticated customers receive the assigned shop contact or third-party label/reference needed for coordination, never admin-only delivery notes. Any future unauthenticated tracking endpoint must use unguessable tokens and return minimal data.
 - Protect MongoDB with least-privilege users, network restrictions, TLS in hosted environments, encrypted backups, retention rules, and tested restore procedures.
 - Never store payment card details. Keep secrets in deployment secret stores, not source, client bundles, logs, or AI-agent prompts.
 
@@ -194,8 +197,8 @@ Resolve these in planning before the relevant code is implemented:
 1. Exact Hyderabad delivery areas/pin codes, excluded areas, delivery hours, minimum order, and fee rules by method.
 2. Allowed weight increments and quantity caps; whether cleaning has a fixed fee, a per-weight fee, a yield effect, or product-specific rules.
 3. Daily-price timezone, publish/cutoff time, expiry behavior, and whether an accepted quote locks a price for a defined duration.
-4. Stock measurement, waste/yield accounting, reservation duration, cancellation/release rules, and handling partial multi-product reservation failure.
-5. Guest checkout versus customer accounts, required contact fields, and customer data retention/deletion policy.
+4. Stock measurement, waste/yield accounting, reservation expiry, cancellation/release rules, and production alerting for interrupted inventory recovery.
+5. Guest checkout remains disabled; customer accounts are implemented. Confirm required customer fields and data retention/deletion policy.
 6. Order cancellation, substitution, out-of-stock, refund, complaint, and order-status policies.
 7. Whether shop-owned delivery is manually assigned, what information a rider may access, and which third-party provider (if any) to evaluate.
 8. Payment method for launch (including whether cash at delivery is acceptable); no paid provider is selected.
@@ -204,4 +207,4 @@ Resolve these in planning before the relevant code is implemented:
 
 ## Current implementation gaps
 
-The frontend is still React JavaScript/JSX; TypeScript, TanStack Query, React Hook Form, and React Testing Library remain target-stack work. The storefront reads the public product catalogue, current daily prices, and stock availability from the API; no admin mutations are exposed before authentication. The previous Fastify/Prisma/PostgreSQL backend scaffold has been replaced by Express/Mongoose/MongoDB. Authentication libraries and flows, Argon2, customer/admin authorization, order APIs, provider adapters, CI, and database-backed integration tests remain for later approved phases. Read APIs and schemas do not enable real commerce workflows by themselves.
+The frontend is still React JavaScript/JSX; TypeScript, TanStack Query, React Hook Form/Zod, and React Testing Library remain target-stack work. The backend now implements account access, protected order creation/read/status operations, resumable stock reservation on MongoDB standalone, and admin-only manual delivery assignment/progress with customer-safe assignment details. Admin product/price/stock writes, status audit history, customer profile management, provider adapters, CI, and live MongoDB integration tests remain follow-up work. No payment is processed and no real delivery provider is contacted.

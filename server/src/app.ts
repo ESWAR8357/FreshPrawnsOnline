@@ -9,12 +9,24 @@ import { getDatabaseState } from './database.js'
 import { createHealthRouter } from './modules/health/health.routes.js'
 import { MongoCatalogueRepository, type CatalogueRepository } from './modules/products/catalogue.repository.js'
 import { createProductsRouter } from './modules/products/products.routes.js'
+import { createAuthRouter } from './modules/users/auth.routes.js'
+import { createAuthenticationMiddleware } from './modules/users/auth.middleware.js'
+import { MongoAuthService, type AuthService } from './modules/users/auth.service.js'
+import { createOrdersRouter } from './modules/orders/orders.routes.js'
+import { MongoOrdersService, type OrdersService } from './modules/orders/orders.service.js'
+import { HttpError } from './http-error.js'
 import { openApiSpec } from './openapi/spec.js'
+
+type AppServices = {
+  auth?: AuthService
+  orders?: OrdersService
+}
 
 export function buildApp(
   config: ServerConfig,
   readDatabaseState: () => ReturnType<typeof getDatabaseState> = getDatabaseState,
   catalogueRepository: CatalogueRepository = new MongoCatalogueRepository(),
+  services: AppServices = {},
 ) {
   const app = express()
   const logger = pino({
@@ -64,6 +76,19 @@ export function buildApp(
 
   app.use('/health', createHealthRouter(readDatabaseState))
   app.use('/api/v1/products', createProductsRouter(readDatabaseState, catalogueRepository))
+  const authService = services.auth ?? new MongoAuthService({
+    accessSecret: config.JWT_ACCESS_SECRET,
+    accessTtlSeconds: config.JWT_ACCESS_TTL_SECONDS,
+    refreshTtlDays: config.REFRESH_TOKEN_TTL_DAYS,
+  })
+  const authenticate = createAuthenticationMiddleware(config.JWT_ACCESS_SECRET, authService)
+  app.use('/api/v1/auth', rateLimit({
+    windowMs: 900000,
+    limit: 10,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+  }), createAuthRouter(authService, config, authenticate))
+  app.use('/api/v1/orders', createOrdersRouter(services.orders ?? new MongoOrdersService(), authenticate))
   app.get('/openapi.json', (_request, response) => response.json(openApiSpec))
 
   app.use((_request, response) => {
@@ -72,6 +97,10 @@ export function buildApp(
 
   const errorHandler: ErrorRequestHandler = (error: unknown, _request, response, next) => {
     if (response.headersSent) return next(error)
+    if (error instanceof HttpError) {
+      response.status(error.status).json({ error: { code: error.code, message: error.message } })
+      return
+    }
     const candidateStatus = typeof error === 'object' && error !== null && 'status' in error
       ? Number(error.status)
       : 500

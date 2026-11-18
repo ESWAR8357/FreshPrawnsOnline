@@ -4,10 +4,12 @@ import { Order } from './orders/order.model.js'
 import { Product } from './products/product.model.js'
 import { Stock, StockMovement } from './inventory/stock.model.js'
 import { User } from './users/user.model.js'
+import { RefreshSession } from './users/refresh-session.model.js'
 
 export async function initializeModelIndexes(): Promise<void> {
   await Promise.all([
     User.init(),
+    RefreshSession.init(),
     Product.init(),
     DailyPrice.init(),
     Stock.init(),
