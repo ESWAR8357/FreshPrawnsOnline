@@ -1,22 +1,22 @@
 # Fresh Prawns Online
 
-Fresh Prawns Online is a customer storefront and owner dashboard for a single-owner prawn shop serving Hyderabad. The application is split into independently runnable frontend and backend services in this repository. REST integration between them is planned for a later phase.
+Fresh Prawns Online is a customer storefront and owner dashboard for a single-owner prawn shop serving Hyderabad. The application is split into independently runnable frontend and backend services in this repository. The storefront reads the public product catalogue, current daily prices, and available stock through REST; cart, checkout, tracking, and order operations remain demonstrations.
 
 ## Current project stack
 
 - **Frontend:** React, JavaScript/JSX today, Vite, Tailwind CSS, React Router. TypeScript, TanStack Query, React Hook Form/Zod, and React Testing Library are target frontend choices to adopt in later reviewed work; they are not all implemented yet.
 - **Backend:** Node.js/TypeScript, Express, MongoDB/Mongoose, Zod configuration validation, structured Pino request logging, Helmet, CORS allowlist, and Express rate limits.
-- **Backend API foundation:** process and MongoDB readiness at `GET /health`; initial OpenAPI JSON at `GET /openapi.json`; modular Mongoose models and indexes for users, products, daily prices, stock/movements, order snapshots, and delivery assignments.
+- **Backend APIs:** process and MongoDB readiness at `GET /health`; OpenAPI JSON at `GET /openapi.json`; public catalogue endpoints at `GET /api/v1/products` and `GET /api/v1/products/:slug`, including current price in integer paise, cleaned/uncleaned options, and stock/available weight in integer grams.
 - **Database:** MongoDB is the only application database. Local development uses Docker Compose. Frontend and backend are independently started and built.
 
 ## Phase 1 frontend
 
-The existing Phase 1 UI is preserved and remains a frontend-only prototype using mock data and local React state:
+The Phase 1 storefront presentation is preserved. Product, current price, preparation options, and availability are API-backed; the following remain mock/local demonstrations:
 
 - Responsive homepage, catalogue, product details, cleaned/uncleaned choice, weight and quantity selection, cart, checkout UI, address/location placeholder, tracking, and support/contact section.
-- Admin demo at `/admin` for sample daily prices, stock by weight, orders, delivery method/assignment, product controls, and sales overview.
+- Admin demo at `/admin` for API-backed read-only products/prices/stock and sample order, delivery, and sales views. Product and inventory editing is disabled until authenticated write APIs are added.
 - Routes: `/`, `/shop`, `/product/:id`, `/cart`, `/checkout`, `/track`, and `/admin`.
-- The frontend does not use the backend yet. No real orders, inventory reservations, login, payments, maps, notifications, or delivery requests are made.
+- Sample orders, cart pricing, checkout, tracking, and dashboard order metrics still use mock/local data. No order placement, stock reservation, login, payments, maps, notifications, or delivery requests are made.
 
 ## Local setup
 
@@ -60,25 +60,45 @@ npm run dev:api
 
 The frontend is normally at `http://localhost:5173`; the API listens on `http://127.0.0.1:4000`. Verify API process and database readiness at `http://127.0.0.1:4000/health` and view the current OpenAPI document at `http://127.0.0.1:4000/openapi.json`. The health route returns `503` and `database: "disconnected"` if the MongoDB connection is not ready. API startup requires MongoDB and fails explicitly if it cannot connect.
 
-The API reads the root `.env` using Node's `--env-file` option. `MONGODB_URI`, `HOST`, `PORT`, `NODE_ENV`, `LOG_LEVEL`, `CORS_ORIGINS`, `RATE_LIMIT_WINDOW_MS`, and `RATE_LIMIT_MAX` are validated with Zod before startup.
+The Vite development server proxies `/api` requests to the local API. For separately hosted services, set `VITE_API_BASE_URL` to the API origin at frontend build time and add the frontend origin to the API's `CORS_ORIGINS`. The API reads the root `.env` using Node's `--env-file` option. `MONGODB_URI`, `HOST`, `PORT`, `NODE_ENV`, `LOG_LEVEL`, `CORS_ORIGINS`, `RATE_LIMIT_WINDOW_MS`, and `RATE_LIMIT_MAX` are validated with Zod before startup.
+
+### Load clearly labeled sample catalogue data
+
+The database starts empty. After starting MongoDB and installing dependencies, run the explicit development-only seed command to load four sample products, today's sample prices, and stock weights:
+
+```powershell
+npm --prefix server run seed:sample
+```
+
+The command runs only when `NODE_ENV=development` and `MONGODB_URI` points to a local host. Seeded products are marked as sample data; do not treat their prices or quantities as real shop inventory. Re-running the command refreshes the same sample products, today's sample prices, and stock values.
+
+### Public catalogue API
+
+- `GET /api/v1/products` — active products enriched with the currently effective daily price, enabled preparation options, and stock in grams. Optional validated filters: `?size=Small|Medium|Large` and `?preparation=cleaned|uncleaned`.
+- `GET /api/v1/products/:slug` — one active product with the same price and availability fields.
+- Prices are integer paise per kg (`pricePerKgPaise`); stock quantities are integer grams (`stock.onHandGrams`, `stock.availableGrams`). A product with no current price returns `pricePerKgPaise: null`; missing stock is reported as zero available grams.
+- Invalid filters/slugs return a structured `400`; unknown or inactive products return `404`; MongoDB unavailability returns `503`.
+
+These are public read endpoints only. No API in this stage can create or modify products, prices, or stock. Admin product/price/stock controls are read-only until authentication, role authorization, and validated write endpoints are implemented.
 
 ## Checks
 
 ```powershell
 npm run build
 npm run lint
+npm --prefix server run lint
 npm run test:api
 npm run typecheck:api
 npm run build:api
 ```
 
-API tests use Supertest and an injected MongoDB health state, so the focused unit/API suite can run without connecting to a real database. For database-backed local development, start Compose first.
+API tests use Supertest and injected catalogue repositories, so focused unit/API validation runs without connecting to a real database. For database-backed local development, start Compose first.
 
 ## Backend foundation boundaries
 
-The API foundation includes environment validation, MongoDB connection lifecycle, startup index initialization, health/OpenAPI foundation, request IDs, structured request logs with sensitive headers redacted, secure headers, allowlisted CORS, request rate limiting, JSON size limits, and centralized safe errors. Mongoose schema/index foundations are grouped by business area under `server/src/modules/`.
+The API includes environment validation, MongoDB connection lifecycle, startup index initialization, health/OpenAPI endpoints, request IDs, structured request logs with sensitive headers redacted, secure headers, allowlisted CORS, request rate limiting, JSON size limits, centralized safe errors, and public product/pricing/stock reads. Zod validates API filters and slugs; Mongoose schemas validate stored product, price, preparation fee, and stock values. Schemas and endpoints are grouped by business area under `server/src/modules/`.
 
-No product/pricing/stock/order business API, authentication flow, customer/admin authorization middleware, cart persistence, checkout, or tracking API is implemented yet. The initial models are schema foundations only. Do not treat them as ready for production traffic or actual customer data.
+Product catalogue, daily pricing, and available stock can be read by the storefront. Admin mutations, authentication, customer/admin authorization middleware, cart persistence, checkout, stock reservations, and tracking APIs are not implemented. Do not treat sample data or demo order flows as ready for real customer transactions.
 
 ## MongoDB consistency
 
@@ -93,8 +113,9 @@ The Compose database is a standalone MongoDB instance, which does not support mu
 
 1. **Phase 1:** Frontend mock-data UI, preserved as-is.
 2. **Phase 2:** Planning and architecture, including owner decisions and consistency/security review.
-3. **Phase 3:** Backend foundation and MongoDB connection, now implemented as described above; the frontend stays on mocks.
-4. **Later phases:** Add products/pricing/stock APIs, authentication/admin roles, carts/orders/checkout, and delivery assignment in small reviewed slices. Integrate the frontend only when those APIs are approved and tested.
+3. **Phase 3:** Backend foundation and MongoDB connection, now implemented as described above.
+4. **Current feature stage:** Public product, current daily-price, and stock-availability reads; storefront integration; admin writes intentionally deferred until authenticated admin access is available.
+5. **Later phases:** Authentication/admin roles, product/pricing/stock management, cart/order/checkout APIs, and delivery assignment in small reviewed slices. Integrate each frontend workflow only when its API is approved and tested.
 
 Payments, maps/location, third-party delivery, email/SMS, and cloud image storage remain provider-independent future integrations. No provider has been selected or connected. Obtain explicit owner approval before creating paid accounts, adding credentials, enabling a provider, or processing live customer data. Never store card data.
 

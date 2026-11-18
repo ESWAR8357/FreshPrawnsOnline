@@ -10,7 +10,8 @@
     "dev": "node --watch --env-file=../.env --import tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node --env-file=../.env dist/index.js",
-    "lint": "eslint src test",
+    "seed:sample": "node --env-file=../.env --import tsx scripts/seed-sample-catalogue.ts",
+    "lint": "eslint src test scripts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },

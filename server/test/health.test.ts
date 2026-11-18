@@ -40,6 +40,8 @@ describe('health and API foundation', () => {
     expect(response.status).toBe(200)
     expect(response.body.openapi).toBe('3.1.0')
     expect(response.body.paths['/health'].get.responses).toHaveProperty('503')
+    expect(response.body.paths['/api/v1/products'].get.responses).toHaveProperty('400')
+    expect(response.body.paths['/api/v1/products/{slug}'].get.responses).toHaveProperty('404')
   })
 
   it('returns centralized errors and applies security headers', async () => {

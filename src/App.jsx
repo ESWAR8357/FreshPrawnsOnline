@@ -5,18 +5,63 @@ import {
   Fish, Headset, MapPin, Menu, Minus, PackageCheck, Plus, Search, ShoppingBag, SlidersHorizontal,
   Sparkles, Truck, X,
 } from 'lucide-react'
-import { initialProducts, sampleOrders } from './data'
+import { sampleOrders } from './data'
 import './App.css'
 
 const money = (amount) => `₹${Math.round(amount).toLocaleString('en-IN')}`
 const deliveryFee = 40
+const formatWeight = (grams) => grams >= 1000
+  ? `${(grams / 1000).toLocaleString('en-IN', { maximumFractionDigits: 2 })} kg`
+  : `${grams.toLocaleString('en-IN')} g`
+
+function toStoreProduct(item) {
+  const cleanedOption = item.preparationOptions.find((option) => option.type === 'cleaned')
+  return {
+    ...item,
+    pricePerKg: item.pricePerKgPaise === null ? null : item.pricePerKgPaise / 100,
+    cleaningFee: (cleanedOption?.feePaise || 0) / 100,
+    stockKg: item.stock.availableGrams / 1000,
+    availableGrams: item.stock.availableGrams,
+    preparationOptions: item.preparationOptions || [],
+    image: item.imageUrl || '',
+  }
+}
 
 function App() {
-  const [products, setProducts] = useState(initialProducts)
+  const [products, setProducts] = useState([])
+  const [catalogueStatus, setCatalogueStatus] = useState('loading')
+  const [catalogueError, setCatalogueError] = useState('')
+  const [catalogueRetry, setCatalogueRetry] = useState(0)
   const [cart, setCart] = useState([])
   const [activeOrder, setActiveOrder] = useState(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [toast, setToast] = useState(null)
+
+  useEffect(() => {
+    const controller = new AbortController()
+    const apiBase = import.meta.env.VITE_API_BASE_URL || ''
+
+    fetch(`${apiBase}/api/v1/products`, { signal: controller.signal })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => null)
+        if (!response.ok) throw new Error(payload?.error?.message || `Product service unavailable (${response.status}).`)
+        if (!Array.isArray(payload?.data)) throw new Error('Product service returned an invalid catalogue response.')
+        return payload.data.map(toStoreProduct)
+      })
+      .then((items) => {
+        setProducts(items)
+        setCatalogueStatus('ready')
+      })
+      .catch((error) => {
+        if (error.name === 'AbortError') return
+        setCatalogueError(error instanceof TypeError
+          ? 'Could not reach the product service. Check that the API and MongoDB are running, then try again.'
+          : error.message || 'The product catalogue is temporarily unavailable.')
+        setCatalogueStatus('error')
+      })
+
+    return () => controller.abort()
+  }, [catalogueRetry])
 
   useEffect(() => {
     if (!toast) return undefined
@@ -25,6 +70,15 @@ function App() {
   }, [toast])
 
   const addToCart = (product, cleaned, weight, quantity = 1) => {
+    const option = product.preparationOptions.find((item) => item.type === (cleaned ? 'cleaned' : 'uncleaned'))
+    if (
+      product.pricePerKg === null
+      || !option?.enabled
+      || product.availableGrams < weight * quantity
+    ) {
+      setToast({ message: 'This selection is no longer available' })
+      return
+    }
     const key = `${product.id}-${cleaned ? 'cleaned' : 'whole'}-${weight}`
     setCart((items) => {
       const found = items.find((item) => item.key === key)
@@ -35,13 +89,22 @@ function App() {
   }
 
   const updateQuantity = (key, change) => setCart((items) => items
-    .map((item) => item.key === key ? { ...item, quantity: item.quantity + change } : item)
+    .map((item) => {
+      if (item.key !== key) return item
+      const product = products.find((entry) => entry.id === item.productId)
+      const availableQuantity = product ? Math.floor(product.availableGrams / item.weight) : 0
+      return { ...item, quantity: Math.max(0, Math.min(availableQuantity, item.quantity + change)) }
+    })
     .filter((item) => item.quantity > 0))
 
   const clearCart = () => setCart([])
   const cartCount = cart.reduce((total, item) => total + item.quantity, 0)
 
-  const updateProduct = (id, patch) => setProducts((items) => items.map((item) => item.id === id ? { ...item, ...patch } : item))
+  const retryCatalogue = () => {
+    setCatalogueError('')
+    setCatalogueStatus('loading')
+    setCatalogueRetry((attempt) => attempt + 1)
+  }
 
   return (
     <BrowserRouter>
@@ -49,13 +112,13 @@ function App() {
         <Announcement />
         <Header cartCount={cartCount} menuOpen={menuOpen} setMenuOpen={setMenuOpen} />
         <Routes>
-          <Route path="/" element={<HomePage products={products} onAdd={addToCart} />} />
-          <Route path="/shop" element={<ShopPage products={products} onAdd={addToCart} />} />
-          <Route path="/product/:id" element={<ProductPage products={products} onAdd={addToCart} />} />
+          <Route path="/" element={<HomePage products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={retryCatalogue} onAdd={addToCart} />} />
+          <Route path="/shop" element={<ShopPage products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={retryCatalogue} onAdd={addToCart} />} />
+          <Route path="/product/:id" element={<ProductPage products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={retryCatalogue} onAdd={addToCart} />} />
           <Route path="/cart" element={<CartPage cart={cart} products={products} onChange={updateQuantity} />} />
           <Route path="/checkout" element={<CheckoutPage cart={cart} products={products} onPlaceOrder={(order) => { setActiveOrder(order); clearCart() }} />} />
           <Route path="/track" element={<TrackPage order={activeOrder} />} />
-          <Route path="/admin/*" element={<AdminPage products={products} updateProduct={updateProduct} />} />
+          <Route path="/admin/*" element={<AdminPage products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={retryCatalogue} />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
         <Footer />
@@ -94,7 +157,7 @@ function Header({ cartCount, menuOpen, setMenuOpen }) {
   )
 }
 
-function HomePage({ products, onAdd }) {
+function HomePage({ products, catalogueStatus, catalogueError, onRetry, onAdd }) {
   const featured = products.filter((product) => product.active).slice(0, 3)
   return (
     <main>
@@ -123,9 +186,12 @@ function HomePage({ products, onAdd }) {
 
       <section className="section-block popular-section">
         <SectionHeading eyebrow="THE GOOD STUFF" title="Straight from the sea" description="A few local favourites to get you started." action={<Link to="/shop" className="text-link">View all prawns <ArrowRight size={16} /></Link>} />
-        <div className="product-grid">
-          {featured.map((product) => <ProductCard key={product.id} product={product} onAdd={onAdd} />)}
-        </div>
+        {products.some((product) => product.sampleData) && <p className="catalogue-sample-note" role="note">Sample catalogue data for local development. Prices and stock are illustrative.</p>}
+        {catalogueStatus !== 'ready'
+          ? <CatalogueFeedback status={catalogueStatus} error={catalogueError} onRetry={onRetry} />
+          : featured.length
+            ? <div className="product-grid">{featured.map((product) => <ProductCard key={product.id} product={product} onAdd={onAdd} />)}</div>
+            : <CatalogueFeedback status="empty" />}
       </section>
 
       <section id="our-promise" className="promise-section">
@@ -143,49 +209,75 @@ function SectionHeading({ eyebrow, title, description, action }) {
   return <div className="section-heading"><div><div className="eyebrow">{eyebrow}</div><h2>{title}</h2>{description && <p>{description}</p>}</div>{action}</div>
 }
 
+function CatalogueFeedback({ status, error, onRetry }) {
+  if (status === 'loading') {
+    return <div className="empty-state" role="status"><Fish size={34} /><h2>Bringing in today's catch</h2><p>Loading the latest products, prices and availability…</p></div>
+  }
+  if (status === 'error') {
+    return <div className="empty-state" role="alert"><Fish size={34} /><h2>We couldn’t load the catalogue</h2><p>{error || 'The product service is temporarily unavailable.'}</p><button className="button button-outline" type="button" onClick={onRetry}>Try again</button></div>
+  }
+  return <div className="empty-state"><Fish size={34} /><h2>No prawns available right now</h2><p>Please check back soon for the next fresh catch.</p></div>
+}
+
 function ProductCard({ product, onAdd }) {
+  const canQuickAdd = product.availableGrams >= 500
+    && product.pricePerKg !== null
+    && product.preparationOptions.some((option) => option.type === 'uncleaned' && option.enabled)
   return (
     <article className="product-card">
-      <Link to={`/product/${product.id}`} className="product-photo"><img src={product.image} alt={product.name} /><span className="product-badge">{product.badge}</span><span className="quick-view"><Search size={15} /> Quick view</span></Link>
+      <Link to={`/product/${product.id}`} className="product-photo">{product.image && <img src={product.image} alt={product.name} />}<span className="product-badge">{product.badge}</span><span className="quick-view"><Search size={15} /> Quick view</span></Link>
       <div className="product-card-body">
-        <div className="product-meta"><span>{product.size}</span><span className="availability"><i /> In stock</span></div>
+        <div className="product-meta"><span>{product.size}</span><span className={`availability ${product.availableGrams < 500 ? 'unavailable' : ''}`}><i />{product.availableGrams >= 500 ? 'In stock' : 'Unavailable'}</span></div>
         <h3><Link to={`/product/${product.id}`}>{product.name}</Link></h3>
         <p>{product.description}</p>
-        <div className="product-card-bottom"><div><strong>{money(product.pricePerKg)}</strong><small> / kg</small></div><button className="icon-add" type="button" aria-label={`Add ${product.name} to cart`} onClick={() => onAdd(product, false, 500)}><Plus size={19} /></button></div>
+        <div className="product-card-bottom"><div><strong>{product.pricePerKg === null ? 'Price updating' : money(product.pricePerKg)}</strong>{product.pricePerKg !== null && <small> / kg</small>}</div><button className="icon-add" type="button" aria-label={`Add ${product.name} to cart`} disabled={!canQuickAdd} onClick={() => onAdd(product, false, 500)}><Plus size={19} /></button></div>
         <div className="product-card-hint">Add 500 g · uncleaned</div>
       </div>
     </article>
   )
 }
 
-function ShopPage({ products, onAdd }) {
+function ShopPage({ products, catalogueStatus, catalogueError, onRetry, onAdd }) {
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('All prawns')
   const categories = ['All prawns', 'Small', 'Medium', 'Large']
   const visible = products.filter((p) => p.active && p.name.toLowerCase().includes(search.toLowerCase()) && (filter === 'All prawns' || p.size.toLowerCase() === filter.toLowerCase()))
   return <main className="page-main"><div className="page-title-row"><div><div className="eyebrow">FROM OUR COUNTER TO YOUR KITCHEN</div><h1>Shop prawns</h1><p>Fresh picks for whatever you're cooking up.</p></div><span className="catalogue-count">{products.filter((product) => product.active).length} fresh picks</span></div>
+    {products.some((product) => product.sampleData) && <p className="catalogue-sample-note" role="note">Sample catalogue data for local development. Prices and stock are illustrative.</p>}
     <div className="catalogue-tools"><div className="filter-pills" role="group" aria-label="Filter by prawn size">{categories.map((category) => <button key={category} className={filter === category ? 'filter-pill active' : 'filter-pill'} onClick={() => setFilter(category)} type="button">{category}</button>)}</div><label className="search-box"><Search size={17} /><span className="sr-only">Search prawns</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find your prawns..." /></label></div>
-    {visible.length ? <div className="product-grid catalogue-grid">{visible.map((product) => <ProductCard key={product.id} product={product} onAdd={onAdd} />)}</div> : <div className="empty-state"><Fish size={34} /><h2>No prawns found</h2><p>Try another name or size filter.</p><button className="button button-outline" onClick={() => { setFilter('All prawns'); setSearch('') }}>Clear filters</button></div>}
-    <div className="catalogue-note"><Sparkles size={17} /> Prices are per kg and may change with the day's fresh catch. Your cart uses today's sample prices.</div>
+    {catalogueStatus !== 'ready'
+      ? <CatalogueFeedback status={catalogueStatus} error={catalogueError} onRetry={onRetry} />
+      : visible.length
+        ? <div className="product-grid catalogue-grid">{visible.map((product) => <ProductCard key={product.id} product={product} onAdd={onAdd} />)}</div>
+        : products.length
+          ? <div className="empty-state"><Fish size={34} /><h2>No prawns found</h2><p>Try another name or size filter.</p><button className="button button-outline" onClick={() => { setFilter('All prawns'); setSearch('') }}>Clear filters</button></div>
+          : <CatalogueFeedback status="empty" />}
+    <div className="catalogue-note"><Sparkles size={17} /> Prices and available weights are supplied by the shop and can change with today's catch.</div>
   </main>
 }
 
-function ProductPage({ products, onAdd }) {
+function ProductPage({ products, catalogueStatus, catalogueError, onRetry, onAdd }) {
   const { id } = useParams()
   const product = products.find((item) => item.id === id && item.active)
   const [cleaned, setCleaned] = useState(true)
   const [weight, setWeight] = useState(500)
   const [quantity, setQuantity] = useState(1)
+  if (catalogueStatus === 'loading' || catalogueStatus === 'error') {
+    return <main className="page-main"><CatalogueFeedback status={catalogueStatus} error={catalogueError} onRetry={onRetry} /></main>
+  }
   if (!product) return <NotFound />
+  const cleanedOption = product.preparationOptions.find((option) => option.type === 'cleaned' && option.enabled)
+  const uncleanedOption = product.preparationOptions.find((option) => option.type === 'uncleaned' && option.enabled)
   const prepFee = cleaned ? product.cleaningFee : 0
-  const price = (product.pricePerKg * weight / 1000 + prepFee) * quantity
+  const price = product.pricePerKg === null ? null : (product.pricePerKg * weight / 1000 + prepFee) * quantity
+  const maxQuantity = Math.floor(product.availableGrams / weight)
   const handleAdd = () => onAdd(product, cleaned, weight, quantity)
-  return <main className="page-main detail-page"><Link to="/shop" className="back-link"><ArrowLeft size={16} /> Back to all prawns</Link><div className="detail-layout"><div className="detail-image"><img src={product.image} alt={product.name} /><span className="product-badge">{product.badge}</span><div className="image-caption"><BadgeCheck size={16} /> Freshly sourced for today's orders</div></div><div className="detail-info"><div className="eyebrow">{product.size} · {product.origin}</div><h1>{product.name}</h1><p className="detail-description">{product.longDescription}</p><div className="detail-price">{money(product.pricePerKg)} <small>/ kg</small><span className="price-date"><Clock3 size={13} /> Today's sample price</span></div>
-      <div className="option-group"><div className="option-heading"><b>How would you like them?</b><span>Choose your prep</span></div><div className="prep-options"><button type="button" onClick={() => setCleaned(false)} className={`prep-option ${!cleaned ? 'selected' : ''}`}><span className="option-radio" /><span><b>Uncleaned</b><small>As they come, fresh & whole</small></span><strong>Included</strong></button><button type="button" onClick={() => setCleaned(true)} className={`prep-option ${cleaned ? 'selected' : ''}`}><span className="option-radio" /><span><b>Cleaned</b><small>Deveined & ready to cook</small></span><strong>+{money(product.cleaningFee)}</strong></button></div></div>
-      <div className="option-group"><div className="option-heading"><b>Pick your weight</b><span>Price adjusts by weight</span></div><div className="weight-options">{[250, 500, 1000].map((grams) => <button key={grams} type="button" className={`weight-option ${weight === grams ? 'selected' : ''}`} onClick={() => setWeight(grams)}>{grams >= 1000 ? '1 kg' : `${grams} g`}</button>)}</div></div>
-      <div className="detail-buy-row"><div className="quantity-picker"><button type="button" aria-label="Decrease quantity" onClick={() => setQuantity(Math.max(1, quantity - 1))}><Minus size={15} /></button><span>{quantity}</span><button type="button" aria-label="Increase quantity" onClick={() => setQuantity(quantity + 1)}><Plus size={15} /></button></div><button type="button" className="button button-dark add-to-cart" onClick={handleAdd}><ShoppingBag size={17} /> Add to cart · {money(price)}</button></div>
+  return <main className="page-main detail-page"><Link to="/shop" className="back-link"><ArrowLeft size={16} /> Back to all prawns</Link>{product.sampleData && <p className="catalogue-sample-note" role="note">Sample product and pricing data for local development.</p>}<div className="detail-layout"><div className="detail-image">{product.image && <img src={product.image} alt={product.name} />}<span className="product-badge">{product.badge}</span><div className="image-caption"><BadgeCheck size={16} /> Freshly sourced for today's orders</div></div><div className="detail-info"><div className="eyebrow">{product.size} · {product.origin}</div><h1>{product.name}</h1><p className="detail-description">{product.longDescription || product.description}</p><div className="detail-price">{product.pricePerKg === null ? 'Price updating' : <>{money(product.pricePerKg)} <small>/ kg</small></>}<span className="price-date"><Clock3 size={13} /> Current shop price</span></div>
+      <div className="option-group"><div className="option-heading"><b>How would you like them?</b><span>Choose your prep</span></div><div className="prep-options"><button type="button" disabled={!uncleanedOption} onClick={() => setCleaned(false)} className={`prep-option ${!cleaned ? 'selected' : ''}`}><span className="option-radio" /><span><b>Uncleaned</b><small>As they come, fresh & whole</small></span><strong>Included</strong></button><button type="button" disabled={!cleanedOption} onClick={() => setCleaned(true)} className={`prep-option ${cleaned ? 'selected' : ''}`}><span className="option-radio" /><span><b>Cleaned</b><small>Deveined & ready to cook</small></span><strong>+{money(product.cleaningFee)}</strong></button></div></div>
+      <div className="option-group"><div className="option-heading"><b>Pick your weight</b><span>{product.availableGrams ? `${formatWeight(product.availableGrams)} available` : 'Currently out of stock'}</span></div><div className="weight-options">{[250, 500, 1000].map((grams) => <button key={grams} type="button" disabled={grams > product.availableGrams} className={`weight-option ${weight === grams ? 'selected' : ''}`} onClick={() => { setWeight(grams); setQuantity(Math.min(quantity, Math.floor(product.availableGrams / grams))) }}>{grams >= 1000 ? '1 kg' : `${grams} g`}</button>)}</div></div>
+      <div className="detail-buy-row"><div className="quantity-picker"><button type="button" aria-label="Decrease quantity" onClick={() => setQuantity(Math.max(1, quantity - 1))}><Minus size={15} /></button><span>{quantity}</span><button type="button" aria-label="Increase quantity" disabled={quantity >= maxQuantity} onClick={() => setQuantity(Math.min(maxQuantity, quantity + 1))}><Plus size={15} /></button></div><button type="button" className="button button-dark add-to-cart" disabled={!maxQuantity || !price || (cleaned && !cleanedOption) || (!cleaned && !uncleanedOption)} onClick={handleAdd}><ShoppingBag size={17} /> {price === null ? 'Price unavailable' : !maxQuantity ? 'Out of stock' : <>Add to cart · {money(price)}</>}</button></div>
       <div className="detail-delivery-note"><Truck size={17} /><span><b>Delivery across Hyderabad</b><small>Choose a delivery option at checkout · from ₹{deliveryFee}</small></span></div>
-    </div></div><section className="detail-bottom-note"><span>✳</span> Sample product information for Phase 1. Availability and prices are for demonstration only.</section></main>
+    </div></div><section className="detail-bottom-note"><span>✳</span> Product, current price, preparation options and available weight are loaded from the shop API.</section></main>
 }
 
 function getLinePrice(item, product) {
@@ -243,15 +335,15 @@ function Footer() {
   return <footer className="site-footer"><div className="footer-main"><Link to="/" className="brand footer-brand"><span className="brand-mark"><Fish size={21} /></span><span className="brand-name">fresh<span>prawns</span><small>ONLINE · HYDERABAD</small></span></Link><p>Good prawns, good food, good mood.<br />A neighbourhood shop, with a little more convenience.</p><div className="footer-links"><Link to="/shop">Shop</Link><Link to="/track">Track order</Link><Link to="/admin">Admin demo</Link></div></div><div className="footer-bottom"><span>© 2026 Fresh Prawns Online · Sample storefront for Phase 1</span><span>Made with care in Hyderabad <span className="footer-heart">♥</span></span></div></footer>
 }
 
-function AdminPage({ products, updateProduct }) {
+function AdminPage({ products, catalogueStatus, catalogueError, onRetry }) {
   const [tab, setTab] = useState('overview')
   const [selectedOrder, setSelectedOrder] = useState(sampleOrders[0])
   const [orders, setOrders] = useState(sampleOrders)
   const tabs = [{ id: 'overview', label: 'Overview' }, { id: 'products', label: 'Products' }, { id: 'orders', label: 'Orders' }]
-  return <main className="admin-page"><aside className="admin-sidebar"><Link to="/" className="admin-brand"><span className="brand-mark"><Fish size={21} /></span><span>Fresh Prawns<small>SHOP ADMIN · DEMO</small></span></Link><div className="admin-side-label">WORKSPACE</div><nav aria-label="Admin navigation">{tabs.map((item) => <button className={tab === item.id ? 'admin-nav-item active' : 'admin-nav-item'} key={item.id} onClick={() => setTab(item.id)} type="button">{item.id === 'overview' ? <SlidersHorizontal size={17} /> : item.id === 'products' ? <Fish size={17} /> : <PackageCheck size={17} />}{item.label}{item.id === 'orders' && <span className="nav-count">{orders.length}</span>}</button>)}</nav><div className="admin-sidebar-bottom"><span className="admin-avatar">S</span><span><b>Shop owner</b><small>Hyderabad · Demo mode</small></span></div></aside><div className="admin-content"><div className="admin-topbar"><div className="admin-breadcrumb">Workspace <span>/</span> <b>{tabs.find((item) => item.id === tab)?.label}</b></div><Link to="/" className="view-store-link"><ArrowLeft size={14} /> View storefront</Link></div><div className="admin-main-content">{tab === 'overview' && <AdminOverview products={products} orders={orders} setTab={setTab} />}{tab === 'products' && <AdminProducts products={products} updateProduct={updateProduct} />}{tab === 'orders' && <AdminOrders orders={orders} setOrders={setOrders} selectedOrder={selectedOrder} setSelectedOrder={setSelectedOrder} />}</div></div></main>
+  return <main className="admin-page"><aside className="admin-sidebar"><Link to="/" className="admin-brand"><span className="brand-mark"><Fish size={21} /></span><span>Fresh Prawns<small>SHOP ADMIN · DEMO</small></span></Link><div className="admin-side-label">WORKSPACE</div><nav aria-label="Admin navigation">{tabs.map((item) => <button className={tab === item.id ? 'admin-nav-item active' : 'admin-nav-item'} key={item.id} onClick={() => setTab(item.id)} type="button">{item.id === 'overview' ? <SlidersHorizontal size={17} /> : item.id === 'products' ? <Fish size={17} /> : <PackageCheck size={17} />}{item.label}{item.id === 'orders' && <span className="nav-count">{orders.length}</span>}</button>)}</nav><div className="admin-sidebar-bottom"><span className="admin-avatar">S</span><span><b>Shop owner</b><small>Hyderabad · Demo mode</small></span></div></aside><div className="admin-content"><div className="admin-topbar"><div className="admin-breadcrumb">Workspace <span>/</span> <b>{tabs.find((item) => item.id === tab)?.label}</b></div><Link to="/" className="view-store-link"><ArrowLeft size={14} /> View storefront</Link></div><div className="admin-main-content">{tab === 'overview' && <AdminOverview products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={onRetry} orders={orders} setTab={setTab} />}{tab === 'products' && <AdminProducts products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={onRetry} />}{tab === 'orders' && <AdminOrders orders={orders} setOrders={setOrders} selectedOrder={selectedOrder} setSelectedOrder={setSelectedOrder} />}</div></div></main>
 }
 
-function AdminOverview({ products, orders, setTab }) {
+function AdminOverview({ products, catalogueStatus, catalogueError, onRetry, orders, setTab }) {
   const revenue = orders.reduce((sum, order) => sum + order.total, 0)
   return (
     <>
@@ -297,18 +389,44 @@ function AdminOverview({ products, orders, setTab }) {
           <div><h2>Stock at a glance</h2><p>Ready to sell by weight</p></div>
           <button className="admin-text-button" onClick={() => setTab('products')}>Manage stock <ArrowRight size={14} /></button>
         </div>
-        <div className="stock-glance-grid">{products.slice(0, 3).map((product) => <div className="stock-glance-item" key={product.id}><span>{product.name}</span><b>{product.stockKg.toFixed(1)} kg</b><div className="stock-meter"><i style={{ width: `${Math.min(product.stockKg / 20 * 100, 100)}%` }} /></div></div>)}</div>
+        {catalogueStatus !== 'ready' && <CatalogueFeedback status={catalogueStatus} error={catalogueError} onRetry={onRetry} />}
+        {catalogueStatus === 'ready' && (products.length ? <StockGlance products={products} /> : <CatalogueFeedback status="empty" />)}
       </div>
     </>
   )
+}
+
+function StockGlance({ products }) {
+  return <div className="stock-glance-grid">{products.slice(0, 3).map((product) => {
+    const meterWidth = `${Math.min(product.stockKg / 20 * 100, 100)}%`
+    return <div className="stock-glance-item" key={product.id}><span>{product.name}</span><b>{formatWeight(product.availableGrams)}</b><div className="stock-meter"><i style={{ width: meterWidth }} /></div></div>
+  })}</div>
 }
 
 function Metric({ label, value, change, icon }) {
   return <div className="metric-card"><span className="metric-icon">{icon}</span><small>{label}</small><strong>{value}</strong><span className="metric-change">{change}</span></div>
 }
 
-function AdminProducts({ products, updateProduct }) {
-  return <><div className="admin-page-heading"><div><div className="eyebrow">YOUR CATCH, YOUR CALL</div><h1>Products & daily pricing</h1><p>Manage your catalogue, today's price and stock by weight.</p></div><button className="button button-dark admin-add-product" type="button" onClick={() => window.alert('Adding new products will be available with backend integration in Phase 2.')}><Plus size={16} /> Add product</button></div><div className="admin-card products-table-card"><div className="admin-table-top"><div><h2>Product catalogue</h2><p>Prices shown are illustrative Phase 1 sample values.</p></div><span className="catalogue-count">{products.length} products</span></div><div className="table-scroll"><table className="admin-table"><thead><tr><th>PRODUCT</th><th>PRICE / KG</th><th>STOCK BY WEIGHT</th><th>AVAILABILITY</th><th>LIVE</th></tr></thead><tbody>{products.map((product) => <tr key={product.id}><td><div className="table-product"><img src={product.image} alt="" /><span><b>{product.name}</b><small>{product.size} · {product.origin}</small></span></div></td><td><label className="price-input"><span>₹</span><input aria-label={`${product.name} price per kilogram`} type="number" min="1" step="10" value={product.pricePerKg} onChange={(event) => updateProduct(product.id, { pricePerKg: Number(event.target.value) })} /></label></td><td><div className="stock-adjuster"><button type="button" aria-label={`Reduce ${product.name} stock`} onClick={() => updateProduct(product.id, { stockKg: Math.max(0, +(product.stockKg - 0.5).toFixed(1)) })}><Minus size={13} /></button><b>{product.stockKg.toFixed(1)} kg</b><button type="button" aria-label={`Add ${product.name} stock`} onClick={() => updateProduct(product.id, { stockKg: +(product.stockKg + 0.5).toFixed(1) })}><Plus size={13} /></button></div></td><td><span className={product.stockKg < 3 ? 'stock-status low' : 'stock-status'}><i />{product.stockKg < 3 ? 'Low stock' : 'In stock'}</span></td><td><button className={`toggle ${product.active ? 'on' : ''}`} type="button" role="switch" aria-checked={product.active} aria-label={`${product.active ? 'Deactivate' : 'Activate'} ${product.name}`} onClick={() => updateProduct(product.id, { active: !product.active })}><i /></button></td></tr>)}</tbody></table></div><div className="admin-table-footer"><Sparkles size={15} /> Changes update this local demo only. A server will be needed to save them.</div></div><div className="admin-info-note"><BadgeCheck size={17} /><span><b>Daily pricing is in your hands.</b> Update the per-kilogram price any time to reflect your catch of the day.</span></div></>
+function AdminProducts({ products, catalogueStatus, catalogueError, onRetry }) {
+  return <>
+    <div className="admin-page-heading">
+      <div><div className="eyebrow">YOUR CATCH, YOUR CALL</div><h1>Products & daily pricing</h1><p>Catalogue, current price and available stock are loaded from the API.</p></div>
+      <button className="button button-dark admin-add-product" type="button" disabled><Plus size={16} /> Add product</button>
+    </div>
+    <div className="admin-card products-table-card">
+      <div className="admin-table-top">
+        <div><h2>Product catalogue</h2><p>Read-only until admin authentication and write APIs are implemented.</p></div>
+        <span className="catalogue-count">{products.length} products</span>
+      </div>
+      {catalogueStatus !== 'ready'
+        ? <CatalogueFeedback status={catalogueStatus} error={catalogueError} onRetry={onRetry} />
+        : products.length
+          ? <div className="table-scroll"><table className="admin-table"><thead><tr><th>PRODUCT</th><th>PRICE / KG</th><th>AVAILABLE STOCK</th><th>AVAILABILITY</th><th>LIVE</th></tr></thead><tbody>{products.map((product) => <tr key={product.id}><td><div className="table-product">{product.image && <img src={product.image} alt="" />}<span><b>{product.name}</b><small>{product.size} · {product.origin}</small></span></div></td><td>{product.pricePerKg === null ? 'Not set' : money(product.pricePerKg)}</td><td>{formatWeight(product.availableGrams)}</td><td><span className={product.stockKg < 3 ? 'stock-status low' : 'stock-status'}><i />{product.stockKg === 0 ? 'Out of stock' : product.stockKg < 3 ? 'Low stock' : 'In stock'}</span></td><td><span>{product.active ? 'Active' : 'Inactive'}</span></td></tr>)}</tbody></table></div>
+          : <CatalogueFeedback status="empty" />}
+      <div className="admin-table-footer"><Sparkles size={15} /> Price and stock management will be enabled after authenticated admin APIs are added.</div>
+    </div>
+    <div className="admin-info-note"><BadgeCheck size={17} /><span><b>Public catalogue data.</b> Price and available weight reflect the current API response; editing is intentionally disabled.</span></div>
+  </>
 }
 
 function AdminOrders({ orders, setOrders, selectedOrder, setSelectedOrder }) {

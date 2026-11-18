@@ -21,12 +21,47 @@ describe('foundation model validation and indexes', () => {
     expect(Product.schema.indexes()).toContainEqual([{ active: 1, size: 1 }, { background: true }])
   })
 
+  it('rejects malformed slugs and unsupported product sizes', () => {
+    const product = new Product({
+      slug: 'White_Prawns',
+      name: 'White Prawns',
+      size: 'Extra Large',
+    })
+    const errors = product.validateSync()?.errors
+
+    expect(errors?.slug).toBeDefined()
+    expect(errors?.size).toBeDefined()
+  })
+
+  it('validates enabled cleaned and uncleaned preparation options and safe image URLs', () => {
+    const product = new Product({
+      slug: 'white-prawns',
+      name: 'White Prawns',
+      size: 'Medium',
+      imageUrl: 'http://example.test/prawns.jpg',
+      preparationOptions: [
+        { type: 'cleaned', enabled: true, feePaise: 10.5 },
+        { type: 'uncleaned', enabled: true, feePaise: 0 },
+      ],
+    })
+    const errors = product.validateSync()?.errors
+
+    expect(errors?.imageUrl).toBeDefined()
+    expect(errors?.['preparationOptions.0.feePaise']).toBeDefined()
+  })
+
   it('enforces integer weights and non-negative stock', () => {
     const stock = new Stock({ productId: '507f1f77bcf86cd799439011', onHandGrams: 2.5, reservedGrams: -1 })
     const errors = stock.validateSync()?.errors
 
     expect(errors?.onHandGrams).toBeDefined()
     expect(errors?.reservedGrams).toBeDefined()
+  })
+
+  it('does not allow reserved weight to exceed on-hand stock', () => {
+    const stock = new Stock({ productId: '507f1f77bcf86cd799439011', onHandGrams: 1000, reservedGrams: 1500 })
+
+    expect(stock.validateSync()?.errors.reservedGrams).toBeDefined()
   })
 
   it('stores prices as integer paise', () => {

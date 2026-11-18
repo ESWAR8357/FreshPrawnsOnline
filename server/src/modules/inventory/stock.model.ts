@@ -1,9 +1,22 @@
 import { Schema, model } from 'mongoose'
 
+type StockFields = { onHandGrams: number }
+
 const stockSchema = new Schema({
   productId: { type: Schema.Types.ObjectId, ref: 'Product', required: true, unique: true },
   onHandGrams: { type: Number, required: true, min: 0, validate: Number.isSafeInteger, default: 0 },
-  reservedGrams: { type: Number, required: true, min: 0, validate: Number.isSafeInteger, default: 0 },
+  reservedGrams: {
+    type: Number,
+    required: true,
+    min: 0,
+    validate: {
+      validator(this: StockFields, value: number) {
+        return Number.isSafeInteger(value) && value <= this.onHandGrams
+      },
+      message: 'reservedGrams must be an integer no greater than onHandGrams',
+    },
+    default: 0,
+  },
 }, { timestamps: true, versionKey: false })
 
 const stockMovementSchema = new Schema({

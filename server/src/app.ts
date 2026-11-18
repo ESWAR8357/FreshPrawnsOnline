@@ -7,11 +7,14 @@ import pino from 'pino'
 import type { ServerConfig } from './config.js'
 import { getDatabaseState } from './database.js'
 import { createHealthRouter } from './modules/health/health.routes.js'
+import { MongoCatalogueRepository, type CatalogueRepository } from './modules/products/catalogue.repository.js'
+import { createProductsRouter } from './modules/products/products.routes.js'
 import { openApiSpec } from './openapi/spec.js'
 
 export function buildApp(
   config: ServerConfig,
   readDatabaseState: () => ReturnType<typeof getDatabaseState> = getDatabaseState,
+  catalogueRepository: CatalogueRepository = new MongoCatalogueRepository(),
 ) {
   const app = express()
   const logger = pino({
@@ -60,6 +63,7 @@ export function buildApp(
   app.use(express.json({ limit: '32kb', strict: true }))
 
   app.use('/health', createHealthRouter(readDatabaseState))
+  app.use('/api/v1/products', createProductsRouter(readDatabaseState, catalogueRepository))
   app.get('/openapi.json', (_request, response) => response.json(openApiSpec))
 
   app.use((_request, response) => {

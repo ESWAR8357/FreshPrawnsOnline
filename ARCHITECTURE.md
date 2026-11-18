@@ -88,8 +88,8 @@ This foundation does not implement business endpoints, authentication/session fl
 
 Implement small vertical slices, with tests and human review:
 
-1. Public product read APIs plus admin-managed products and effective-dated daily prices.
-2. Stock-by-weight records, append-only adjustments, reservation/release behavior, and concurrency controls.
+1. Public product read APIs with effective-dated prices, preparation options, and stock availability are implemented; admin-managed product and price writes still require authentication.
+2. Authenticated stock-by-weight adjustments, append-only movement records, reservation/release behavior, and concurrency controls.
 3. Customer/admin authentication, refresh-token lifecycle, Argon2 hashes, and role-based authorization.
 4. Server-backed cart/quote and idempotent order creation with server-calculated prices, fees, and stock checks.
 5. Order operations, safe public tracking, status history, and shop-person delivery assignment.
@@ -132,12 +132,12 @@ For multi-product checkout, transient partial reservations are possible without 
 
 ## REST API outline
 
-These are future contracts to refine during Phase 2, not endpoints already implemented.
+These are planned contracts; the public product read endpoints listed below are now implemented.
 
 ### Public/customer
 
 - `GET /api/v1/health` — process/readiness status with dependency state clearly distinguished.
-- `GET /api/v1/products` and `GET /api/v1/products/:productId` — active products and current effective prices/preparation options.
+- `GET /api/v1/products` and `GET /api/v1/products/:slug` — active products and current effective prices, preparation options, and available stock.
 - `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `POST /api/v1/auth/refresh`, `POST /api/v1/auth/logout` — only if the owner chooses customer accounts; otherwise provide a carefully designed guest-checkout flow.
 - `GET/POST/PATCH/DELETE /api/v1/cart` — only if a persistent server-side cart is approved.
 - `POST /api/v1/checkout/quote` — validate requested items and return a server-calculated quote; a quote is not stock reservation unless stated.
@@ -147,9 +147,9 @@ These are future contracts to refine during Phase 2, not endpoints already imple
 ### Admin
 
 - `POST /api/v1/admin/auth/login`, `/refresh`, `/logout`, `GET /api/v1/admin/auth/me`.
-- `POST/GET/PATCH /api/v1/admin/products` and `/api/v1/admin/products/:productId`.
-- `POST /api/v1/admin/products/:productId/prices` — append a new effective-dated price.
-- `GET /api/v1/admin/stock`, `POST /api/v1/admin/stock/:productId/adjustments`.
+- `POST/GET/PATCH /api/v1/admin/products` and `/api/v1/admin/products/:productId` (planned; require admin authentication).
+- `POST /api/v1/admin/products/:productId/prices` — append a new effective-dated price (planned; require admin authentication).
+- `GET /api/v1/admin/stock`, `POST /api/v1/admin/stock/:productId/adjustments` (planned; require admin authentication).
 - `GET /api/v1/admin/orders`, `GET /api/v1/admin/orders/:orderId`.
 - `PATCH /api/v1/admin/orders/:orderId/status` with explicit transition rules.
 - `PATCH /api/v1/admin/orders/:orderId/delivery` for internal assignments or an approved adapter.
@@ -204,4 +204,4 @@ Resolve these in planning before the relevant code is implemented:
 
 ## Current implementation gaps
 
-The frontend is still React JavaScript/JSX; TypeScript, TanStack Query, React Hook Form, and React Testing Library remain target-stack work. The previous Fastify/Prisma/PostgreSQL backend scaffold has been replaced by the Express/Mongoose/MongoDB foundation. Authentication libraries and flows, Argon2, customer/admin authorization, business REST endpoints, provider adapters, CI, and database-backed integration tests remain for their later approved phases. The schema files are foundations; they do not enable real commerce workflows by themselves.
+The frontend is still React JavaScript/JSX; TypeScript, TanStack Query, React Hook Form, and React Testing Library remain target-stack work. The storefront reads the public product catalogue, current daily prices, and stock availability from the API; no admin mutations are exposed before authentication. The previous Fastify/Prisma/PostgreSQL backend scaffold has been replaced by Express/Mongoose/MongoDB. Authentication libraries and flows, Argon2, customer/admin authorization, order APIs, provider adapters, CI, and database-backed integration tests remain for later approved phases. Read APIs and schemas do not enable real commerce workflows by themselves.
