@@ -3,7 +3,7 @@ export const openApiSpec = {
   info: {
     title: 'Fresh Prawns Online API',
     version: '1.0.0',
-    description: 'Customer accounts, order management, manual delivery assignment, and the public product catalogue.',
+    description: 'Customer accounts, order management, manual delivery assignment, admin catalogue/pricing/stock management, and order history.',
   },
   paths: {
     '/health': {
@@ -85,6 +85,83 @@ export const openApiSpec = {
         },
       },
     },
+    '/api/v1/admin/products': {
+      get: {
+        summary: 'List products including inactive products (admin only)',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          { name: 'active', in: 'query', schema: { type: 'string', enum: ['true', 'false'] } },
+          { name: 'size', in: 'query', schema: { type: 'string', enum: ['Small', 'Medium', 'Large'] } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } },
+          { name: 'offset', in: 'query', schema: { type: 'integer', minimum: 0 } },
+        ],
+        responses: { '200': { description: 'Products and total count' }, '401': { description: 'Authentication required' }, '403': { description: 'Administrator access required' } },
+      },
+      post: {
+        summary: 'Create a product (admin only)',
+        security: [{ bearerAuth: [] }],
+        requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/AdminProductInput' } } } },
+        responses: { '201': { description: 'Product created' }, '400': { description: 'Invalid product data' }, '409': { description: 'Product slug already exists' } },
+      },
+    },
+    '/api/v1/admin/products/{productId}': {
+      get: {
+        summary: 'Get a product including inactive products (admin only)',
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: 'productId', in: 'path', required: true, schema: { type: 'string', pattern: '^[a-f0-9]{24}$' } }],
+        responses: { '200': { description: 'Product details' }, '404': { description: 'Product not found' } },
+      },
+      patch: {
+        summary: 'Update or deactivate a product (admin only)',
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: 'productId', in: 'path', required: true, schema: { type: 'string', pattern: '^[a-f0-9]{24}$' } }],
+        requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/AdminProductPatch' } } } },
+        responses: { '200': { description: 'Product updated' }, '400': { description: 'Invalid product patch' }, '404': { description: 'Product not found' }, '409': { description: 'Product slug already exists' } },
+      },
+    },
+    '/api/v1/admin/products/{productId}/prices': {
+      get: {
+        summary: 'List price history for a product (admin only)',
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: 'productId', in: 'path', required: true, schema: { type: 'string', pattern: '^[a-f0-9]{24}$' } }],
+        responses: { '200': { description: 'Price history and total count' }, '404': { description: 'Product not found' } },
+      },
+      post: {
+        summary: 'Append a daily price at Hyderabad local midnight (admin only)',
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: 'productId', in: 'path', required: true, schema: { type: 'string', pattern: '^[a-f0-9]{24}$' } }],
+        requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/DailyPriceInput' } } } },
+        responses: { '201': { description: 'Daily price appended' }, '400': { description: 'Invalid price or date' }, '409': { description: 'Price date is not later than the existing history' } },
+      },
+    },
+    '/api/v1/admin/stock': {
+      get: {
+        summary: 'List stock balances and availability (admin only)',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } },
+          { name: 'offset', in: 'query', schema: { type: 'integer', minimum: 0 } },
+        ],
+        responses: { '200': { description: 'Stock balances and total count' } },
+      },
+    },
+    '/api/v1/admin/stock/{productId}/adjustments': {
+      post: {
+        summary: 'Apply an idempotent on-hand stock adjustment (admin only)',
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: 'productId', in: 'path', required: true, schema: { type: 'string', pattern: '^[a-f0-9]{24}$' } }],
+        requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/StockAdjustmentInput' } } } },
+        responses: { '201': { description: 'Stock adjusted and movement recorded' }, '400': { description: 'Invalid adjustment' }, '409': { description: 'Stock/reservation bounds would be violated' } },
+      },
+    },
+    '/api/v1/admin/stock/{productId}/movements': {
+      get: {
+        summary: 'List append-only stock movements (admin only)',
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: 'productId', in: 'path', required: true, schema: { type: 'string', pattern: '^[a-f0-9]{24}$' } }],
+        responses: { '200': { description: 'Stock movements and total count' }, '404': { description: 'Product not found' } },
+      },
+    },
     '/api/v1/auth/register': {
                   post: {
                     summary: 'Register a customer account',
@@ -139,6 +216,13 @@ export const openApiSpec = {
                   get: {
                     summary: 'List the authenticated customer’s orders or recent admin orders',
                     security: [{ bearerAuth: [] }],
+                    parameters: [
+                      { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 50 } },
+                      { name: 'cursor', in: 'query', schema: { type: 'string', maxLength: 256 } },
+                      { name: 'status', in: 'query', schema: { type: 'string', enum: ['pending', 'confirmed', 'preparing', 'out_for_delivery', 'delivered', 'cancelled'] } },
+                      { name: 'from', in: 'query', schema: { type: 'string', format: 'date-time' } },
+                      { name: 'to', in: 'query', schema: { type: 'string', format: 'date-time' } },
+                    ],
                     responses: { '200': { description: 'Orders visible to the authenticated user' } },
                   },
                   post: {
@@ -166,6 +250,18 @@ export const openApiSpec = {
                       '404': { description: 'Order not found or not visible to this account' },
                     },
                   },
+    },
+    '/api/v1/orders/{id}/events': {
+      get: {
+        summary: 'List order status and delivery events visible to the owner or an admin',
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^[a-f0-9]{24}$' } }],
+        responses: {
+          '200': { description: 'Append-only order event history' },
+          '401': { description: 'Authentication required' },
+          '404': { description: 'Order not found or not visible to this account' },
+        },
+      },
     },
     '/api/v1/orders/{id}/status': {
                   patch: {
@@ -235,6 +331,61 @@ export const openApiSpec = {
       bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
     },
     schemas: {
+      AdminProductInput: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['slug', 'name', 'description', 'longDescription', 'size', 'origin', 'badge', 'imageUrl', 'active', 'preparationOptions'],
+        properties: {
+          slug: { type: 'string', minLength: 2, maxLength: 120, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$' },
+          name: { type: 'string', minLength: 2, maxLength: 120 },
+          description: { type: 'string', maxLength: 2000 },
+          longDescription: { type: 'string', maxLength: 4000 },
+          size: { type: 'string', enum: ['Small', 'Medium', 'Large'] },
+          origin: { type: 'string', maxLength: 120 },
+          badge: { type: 'string', maxLength: 40 },
+          imageUrl: { type: ['string', 'null'], format: 'uri' },
+          active: { type: 'boolean' },
+          preparationOptions: { type: 'array', minItems: 1, maxItems: 2 },
+        },
+      },
+      AdminProductPatch: {
+        type: 'object',
+        minProperties: 1,
+        additionalProperties: false,
+        description: 'A non-empty subset of AdminProductInput fields.',
+        properties: {
+          slug: { type: 'string', minLength: 2, maxLength: 120, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$' },
+          name: { type: 'string', minLength: 2, maxLength: 120 },
+          description: { type: 'string', maxLength: 2000 },
+          longDescription: { type: 'string', maxLength: 4000 },
+          size: { type: 'string', enum: ['Small', 'Medium', 'Large'] },
+          origin: { type: 'string', maxLength: 120 },
+          badge: { type: 'string', maxLength: 40 },
+          imageUrl: { type: ['string', 'null'], format: 'uri' },
+          active: { type: 'boolean' },
+          preparationOptions: { type: 'array', minItems: 1, maxItems: 2 },
+        },
+      },
+      DailyPriceInput: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['effectiveDate', 'pricePerKgPaise'],
+        properties: {
+          effectiveDate: { type: 'string', format: 'date', description: 'Hyderabad calendar date; effective at 00:00 Asia/Kolkata.' },
+          pricePerKgPaise: { type: 'integer', minimum: 1, maximum: 1000000000 },
+        },
+      },
+      StockAdjustmentInput: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['idempotencyKey', 'deltaGrams', 'reason'],
+        properties: {
+          idempotencyKey: { type: 'string', format: 'uuid' },
+          deltaGrams: { type: 'integer', minimum: -1000000, maximum: 1000000, description: 'Signed on-hand delta; cannot reduce below reserved grams.' },
+          reason: { type: 'string', enum: ['received', 'spoilage', 'correction', 'other'] },
+          reference: { type: 'string', maxLength: 160 },
+        },
+      },
       Credentials: {
         type: 'object',
         additionalProperties: false,

@@ -9,5 +9,6 @@ const dailyPriceSchema = new Schema({
 }, { timestamps: true, versionKey: false })
 
 dailyPriceSchema.index({ productId: 1, effectiveFrom: -1 })
+dailyPriceSchema.index({ productId: 1, effectiveFrom: 1 }, { unique: true })
 
 export const DailyPrice = model('DailyPrice', dailyPriceSchema)

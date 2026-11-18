@@ -10,6 +10,7 @@ const database = vi.hoisted(() => ({
   findOrder: vi.fn(),
   findOrderById: vi.fn(),
   findIncompleteOrders: vi.fn(),
+  listOrders: vi.fn(),
   createOrder: vi.fn(),
   updateOrder: vi.fn(),
   updateOrderState: vi.fn(),
@@ -32,7 +33,7 @@ vi.mock('../src/modules/orders/order.model.js', () => ({
   Order: {
     findOne: database.findOrder,
     findById: database.findOrderById,
-    find: database.findIncompleteOrders,
+    find: database.listOrders,
     create: database.createOrder,
     findOneAndUpdate: database.updateOrder,
     updateOne: database.updateOrderState,
@@ -87,6 +88,10 @@ describe('Mongo order service', () => {
     vi.clearAllMocks()
     database.findOrder.mockReturnValue({ select: vi.fn().mockResolvedValue(null) })
     database.findIncompleteOrders.mockResolvedValue([])
+    database.listOrders.mockReturnValue({
+      sort: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue([]),
+    })
     database.findOrderById.mockResolvedValue(document)
     database.findProduct.mockResolvedValue({
       _id: productId,
@@ -124,7 +129,15 @@ describe('Mongo order service', () => {
       }),
       {
         $inc: { reservedGrams: 500 },
-        $push: { reservations: { orderId, grams: 500 } },
+        $push: {
+          reservations: { orderId, grams: 500 },
+          movements: expect.objectContaining({
+            operationId: `order:${orderId.toString()}:reserved`,
+            deltaGrams: 0,
+            reservedDeltaGrams: 500,
+            reason: 'order_reserved',
+          }),
+        },
       },
     )
     expect(Order.findOneAndUpdate).toHaveBeenCalledWith(
@@ -140,6 +153,87 @@ describe('Mongo order service', () => {
 
     expect(customerOrder.deliveryAssignment).toEqual({ method: 'shop', status: 'not_assigned' })
     expect(adminOrder.deliveryAssignment.details).toBe('Admin-only instructions')
+  })
+
+  it('returns owner-scoped order events without exposing actor identifiers', async () => {
+    const createdAt = new Date('2026-03-20T10:01:00.000Z')
+    const eventId = new Types.ObjectId()
+    database.findOrder.mockReturnValue({
+      select: vi.fn().mockResolvedValue({
+        ...document,
+        events: [{
+          _id: eventId,
+          type: 'order_status_changed',
+          actorId: new Types.ObjectId(),
+          actorRole: 'admin',
+          from: 'pending',
+          to: 'confirmed',
+          createdAt,
+        }],
+      }),
+    })
+
+    await expect(service.listEvents(orderId.toString(), '507f1f77bcf86cd799439011', false)).resolves.toEqual([{
+      id: eventId.toString(),
+      type: 'order_status_changed',
+      actorRole: 'admin',
+      from: 'pending',
+      to: 'confirmed',
+      createdAt,
+    }])
+    expect(database.findOrder).toHaveBeenCalledWith({
+      _id: orderId.toString(),
+      customerUserId: '507f1f77bcf86cd799439011',
+      stockReservationState: { $in: ['reserved', 'released', 'consumed'] },
+    })
+  })
+
+  it('paginates customer order history with a stable created-time and id cursor', async () => {
+    const first = { ...document, _id: new Types.ObjectId(), createdAt: new Date('2026-03-20T12:00:00.000Z') }
+    const second = { ...document, _id: new Types.ObjectId(), createdAt: new Date('2026-03-20T11:00:00.000Z') }
+    const extra = { ...document, _id: new Types.ObjectId(), createdAt: new Date('2026-03-20T10:00:00.000Z') }
+    database.listOrders.mockReturnValue({
+      sort: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue([first, second, extra]),
+    })
+
+    const page = await service.listForCustomer('507f1f77bcf86cd799439011', { limit: 2 })
+
+    expect(page.items).toHaveLength(2)
+    expect(page.nextCursor).toBeTruthy()
+    expect(database.listOrders).toHaveBeenCalledWith(expect.objectContaining({
+      customerUserId: '507f1f77bcf86cd799439011',
+      stockReservationState: { $in: ['reserved', 'released', 'consumed'] },
+    }))
+    await service.listForCustomer('507f1f77bcf86cd799439011', { limit: 2, cursor: page.nextCursor as string })
+    const cursorQuery = database.listOrders.mock.calls.at(-1)?.[0]
+    expect(cursorQuery).toEqual(expect.objectContaining({
+      customerUserId: '507f1f77bcf86cd799439011',
+      $or: [
+        { createdAt: { $lt: second.createdAt } },
+        { createdAt: second.createdAt, _id: { $lt: second._id } },
+      ],
+    }))
+  })
+
+  it('records an admin actor with each successful order status transition', async () => {
+    database.findOrderById.mockResolvedValue(document)
+    await service.updateStatus(orderId.toString(), 'confirmed', {
+      id: '507f1f77bcf86cd799439014',
+      role: 'admin',
+    })
+    expect(database.updateOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'pending' }),
+      expect.objectContaining({
+        $push: { events: expect.objectContaining({
+          type: 'order_status_changed',
+          actorRole: 'admin',
+          from: 'pending',
+          to: 'confirmed',
+        }) },
+      }),
+      { new: true, runValidators: true },
+    )
   })
 
   it('requires an assignment before dispatch and rejects invalid delivery status changes', async () => {
@@ -222,7 +316,14 @@ describe('Mongo order service', () => {
         status: 'preparing',
         'deliveryAssignment.status': 'assigned',
       }),
-      { $set: { 'deliveryAssignment.status': 'in_transit' } },
+      expect.objectContaining({
+        $set: { 'deliveryAssignment.status': 'in_transit' },
+        $push: { events: expect.objectContaining({
+          type: 'delivery_status_changed',
+          from: 'assigned',
+          to: 'in_transit',
+        }) },
+      }),
       { new: true, runValidators: true },
     )
 
@@ -271,13 +372,18 @@ describe('Mongo order service', () => {
   })
 
   it('resumes durable reservations left incomplete by a process interruption', async () => {
-    database.findIncompleteOrders.mockResolvedValue([{ ...document, stockReservationState: 'reserving' }])
+    database.listOrders.mockResolvedValue([{ ...document, stockReservationState: 'reserving' }])
 
     await service.recoverIncompleteOperations()
 
     expect(Stock.updateOne).toHaveBeenCalledWith(
       expect.objectContaining({ 'reservations.orderId': { $ne: orderId } }),
-      expect.objectContaining({ $push: { reservations: { orderId, grams: 500 } } }),
+      expect.objectContaining({
+        $push: {
+          reservations: { orderId, grams: 500 },
+          movements: expect.objectContaining({ reason: 'order_reserved', reservedDeltaGrams: 500 }),
+        },
+      }),
     )
     expect(Order.findOneAndUpdate).toHaveBeenCalledWith(
       { _id: orderId.toString(), stockReservationState: 'reserving' },

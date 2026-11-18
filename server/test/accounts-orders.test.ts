@@ -64,9 +64,17 @@ describe('account and order authorization APIs', () => {
   }
   const orders: OrdersService = {
     create: vi.fn(async () => createdOrder),
-    listForCustomer: vi.fn(async () => [createdOrder]),
+    listForCustomer: vi.fn(async () => ({ items: [createdOrder], nextCursor: null })),
     listForAdmin: vi.fn(async () => [createdOrder]),
     getById: vi.fn(async () => createdOrder),
+    listEvents: vi.fn(async () => [{
+      id: '507f1f77bcf86cd799439088',
+      type: 'order_status_changed',
+      actorRole: 'admin',
+      from: 'pending',
+      to: 'confirmed',
+      createdAt: new Date('2026-03-20T10:01:00.000Z'),
+    }]),
     updateStatus: vi.fn(async () => ({ ...createdOrder, status: 'confirmed' })),
     assignDelivery: vi.fn(async (_id, assignment) => ({
       ...createdOrder,
@@ -129,8 +137,20 @@ describe('account and order authorization APIs', () => {
     const token = await bearer(customer)
     const response = await request(app).get('/api/v1/orders').set('Authorization', `Bearer ${token}`)
     expect(response.status).toBe(200)
-    expect(orders.listForCustomer).toHaveBeenCalledWith(customer.id)
+    expect(orders.listForCustomer).toHaveBeenCalledWith(customer.id, { limit: 20 })
     expect(orders.listForAdmin).not.toHaveBeenCalled()
+  })
+
+  it('validates customer order history filters before querying the service', async () => {
+    const token = await bearer(customer)
+    const response = await request(app)
+      .get('/api/v1/orders')
+      .query({ status: 'unknown', limit: '1000' })
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(response.status).toBe(400)
+    expect(response.body.error.code).toBe('INVALID_REQUEST')
+    expect(orders.listForCustomer).not.toHaveBeenCalled()
   })
 
   it('only reads an order through the authenticated owner scope', async () => {
@@ -141,6 +161,22 @@ describe('account and order authorization APIs', () => {
 
     expect(response.status).toBe(200)
     expect(orders.getById).toHaveBeenCalledWith(createdOrder.id, customer.id, false)
+  })
+
+  it('returns order event history only through the authenticated owner scope', async () => {
+    const token = await bearer(customer)
+    const response = await request(app)
+      .get(`/api/v1/orders/${createdOrder.id}/events`)
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(response.status).toBe(200)
+    expect(response.body.data[0]).toMatchObject({
+      type: 'order_status_changed',
+      actorRole: 'admin',
+      from: 'pending',
+      to: 'confirmed',
+    })
+    expect(orders.listEvents).toHaveBeenCalledWith(createdOrder.id, customer.id, false)
   })
 
   it('rejects access tokens with the wrong issuer or audience', async () => {
@@ -225,7 +261,7 @@ describe('account and order authorization APIs', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ status: 'confirmed' })
     expect(allowed.status).toBe(200)
-    expect(orders.updateStatus).toHaveBeenCalledWith(createdOrder.id, 'confirmed')
+    expect(orders.updateStatus).toHaveBeenCalledWith(createdOrder.id, 'confirmed', { id: admin.id, role: 'admin' })
   })
 
   it('requires admin authorization and validates own-delivery assignment details', async () => {
@@ -251,7 +287,7 @@ describe('account and order authorization APIs', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .send(assignment)
     expect(allowed.status).toBe(200)
-    expect(orders.assignDelivery).toHaveBeenCalledWith(createdOrder.id, assignment)
+    expect(orders.assignDelivery).toHaveBeenCalledWith(createdOrder.id, assignment, { id: admin.id, role: 'admin' })
   })
 
   it('accepts manual third-party details but never permits customer delivery-status writes', async () => {
@@ -267,7 +303,7 @@ describe('account and order authorization APIs', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .send(assignment)
     expect(allowed.status).toBe(200)
-    expect(orders.assignDelivery).toHaveBeenCalledWith(createdOrder.id, assignment)
+    expect(orders.assignDelivery).toHaveBeenCalledWith(createdOrder.id, assignment, { id: admin.id, role: 'admin' })
 
     const customerToken = await bearer(customer)
     const denied = await request(app)

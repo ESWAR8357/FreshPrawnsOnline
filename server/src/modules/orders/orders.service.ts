@@ -20,12 +20,20 @@ export type OrderInput = {
 }
 
 export type OrderActor = { id: string; role: 'customer' | 'admin' }
+export type OrderEventActor = { id: string; role: 'admin' | 'system' }
 
 export type DeliveryAssignmentInput =
   | { method: 'shop'; personName: string; personPhone: string }
   | { method: 'third_party'; serviceName: string; reference?: string; details?: string }
 
 const DELIVERY_FEE_PAISE = { shop: 4000, third_party: 6000 } as const
+const MAX_ORDER_EVENTS = 500
+
+function assertEventCapacity(order: { events?: unknown[] }) {
+  if ((order.events?.length ?? 0) >= MAX_ORDER_EVENTS) {
+    throw new HttpError(409, 'ORDER_EVENT_LIMIT_REACHED', 'This order has reached its event history limit')
+  }
+}
 
 export function calculateOrderLineTotalPaise(
   pricePerKgPaise: number,
@@ -98,6 +106,29 @@ type PublicOrder = {
   createdAt: Date
 }
 
+export type CustomerOrderFilters = {
+  limit: number
+  cursor?: string
+  status?: 'pending' | 'confirmed' | 'preparing' | 'out_for_delivery' | 'delivered' | 'cancelled'
+  from?: Date
+  to?: Date
+}
+
+function decodeOrderCursor(cursor: string): { createdAt: Date; id: Types.ObjectId } {
+  try {
+    const [timestamp, id, ...extra] = Buffer.from(cursor, 'base64url').toString('utf8').split('|')
+    const createdAt = new Date(timestamp)
+    if (extra.length || !Number.isFinite(createdAt.getTime()) || !Types.ObjectId.isValid(id)) throw new Error()
+    return { createdAt, id: new Types.ObjectId(id) }
+  } catch {
+    throw new HttpError(400, 'INVALID_ORDER_CURSOR', 'Order history cursor is invalid')
+  }
+}
+
+function encodeOrderCursor(order: { createdAt: Date; _id: Types.ObjectId }): string {
+  return Buffer.from(`${order.createdAt.toISOString()}|${order._id.toString()}`).toString('base64url')
+}
+
 function requestFingerprint(input: OrderInput): string {
   const content = {
     customer: input.customer,
@@ -165,12 +196,20 @@ export function publicOrder(order: OrderRecord, includeInternalDeliveryDetails =
 
 export interface OrdersService {
   create(customerId: string, input: OrderInput): Promise<PublicOrder>
-  listForCustomer(customerId: string): Promise<PublicOrder[]>
+  listForCustomer(customerId: string, filters: CustomerOrderFilters): Promise<{ items: PublicOrder[]; nextCursor: string | null }>
   listForAdmin(): Promise<PublicOrder[]>
   getById(orderId: string, customerId: string, isAdmin: boolean): Promise<PublicOrder>
-  updateStatus(orderId: string, status: string): Promise<PublicOrder>
-  assignDelivery(orderId: string, input: DeliveryAssignmentInput): Promise<PublicOrder>
-  updateDeliveryStatus(orderId: string, status: string): Promise<PublicOrder>
+  listEvents(orderId: string, customerId: string, isAdmin: boolean): Promise<Array<{
+    id: string
+    type: string
+    actorRole: string
+    from: string | null
+    to: string | null
+    createdAt: Date
+  }>>
+  updateStatus(orderId: string, status: string, actor?: OrderEventActor): Promise<PublicOrder>
+  assignDelivery(orderId: string, input: DeliveryAssignmentInput, actor?: OrderEventActor): Promise<PublicOrder>
+  updateDeliveryStatus(orderId: string, status: string, actor?: OrderEventActor): Promise<PublicOrder>
   recoverIncompleteOperations(): Promise<void>
 }
 
@@ -283,6 +322,14 @@ export class MongoOrdersService implements OrdersService {
         totalPaise,
         idempotencyKey,
         requestFingerprint: fingerprint,
+        events: [{
+          type: 'order_status_changed',
+          actorId: new Types.ObjectId(customerId),
+          actorRole: 'customer',
+          from: null,
+          to: 'pending',
+          createdAt: now,
+        }],
       })
     } catch (error) {
       if (typeof error === 'object' && error !== null && 'code' in error && error.code === 11000) {
@@ -304,14 +351,34 @@ export class MongoOrdersService implements OrdersService {
     return publicOrder(completed)
   }
 
-  async listForCustomer(customerId: string) {
-    const orders = await Order.find({
+  async listForCustomer(customerId: string, filters: CustomerOrderFilters) {
+    const query: Record<string, unknown> = {
       customerUserId: customerId,
       stockReservationState: { $in: ['reserved', 'released', 'consumed'] },
-    })
-      .sort({ createdAt: -1 })
-      .limit(50)
-    return orders.map((order) => publicOrder(order))
+    }
+    if (filters.status) query.status = filters.status
+    if (filters.from || filters.to) {
+      query.createdAt = {
+        ...(filters.from ? { $gte: filters.from } : {}),
+        ...(filters.to ? { $lt: filters.to } : {}),
+      }
+    }
+    if (filters.cursor) {
+      const cursor = decodeOrderCursor(filters.cursor)
+      query.$or = [
+        { createdAt: { ...(filters.from ? { $gte: filters.from } : {}), $lt: cursor.createdAt } },
+        { createdAt: cursor.createdAt, _id: { $lt: cursor.id } },
+      ]
+    }
+    const orders = await Order.find(query)
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(filters.limit + 1)
+    const hasMore = orders.length > filters.limit
+    const page = hasMore ? orders.slice(0, filters.limit) : orders
+    return {
+      items: page.map((order) => publicOrder(order)),
+      nextCursor: hasMore && page.length ? encodeOrderCursor(page[page.length - 1]) : null,
+    }
   }
 
   async listForAdmin() {
@@ -332,10 +399,31 @@ export class MongoOrdersService implements OrdersService {
     return publicOrder(order, isAdmin)
   }
 
-  async updateStatus(orderId: string, status: string) {
+  async listEvents(orderId: string, customerId: string, isAdmin: boolean) {
+    const filter = isAdmin
+      ? { _id: orderId }
+      : {
+          _id: orderId,
+          customerUserId: customerId,
+          stockReservationState: { $in: ['reserved', 'released', 'consumed'] },
+        }
+    const order = await Order.findOne(filter).select('events')
+    if (!order) throw new HttpError(404, 'ORDER_NOT_FOUND', 'Order not found')
+    return order.events.map((event) => ({
+      id: event._id.toString(),
+      type: event.type,
+      actorRole: event.actorRole,
+      from: event.from ?? null,
+      to: event.to ?? null,
+      createdAt: event.createdAt,
+    }))
+  }
+
+  async updateStatus(orderId: string, status: string, actor: OrderEventActor = { id: '', role: 'system' }) {
     let current = await Order.findById(orderId)
     if (!current) throw new HttpError(404, 'ORDER_NOT_FOUND', 'Order not found')
     if (current.status === status) return publicOrder(current)
+    assertEventCapacity(current)
     const allowed: Record<string, string[]> = {
       pending: ['confirmed', 'cancelled'],
       confirmed: ['preparing', 'cancelled'],
@@ -358,10 +446,22 @@ export class MongoOrdersService implements OrdersService {
     if (status !== 'cancelled' && status !== 'delivered') {
       const updated = await Order.findOneAndUpdate(
         { _id: current._id, status: current.status, stockReservationState: 'reserved' },
-        { $set: {
+        {
+          $set: {
           status,
           ...(status === 'out_for_delivery' ? { 'deliveryAssignment.status': 'in_transit' } : {}),
-        } },
+          },
+          $push: {
+            events: {
+              type: 'order_status_changed',
+              actorId: actor.id ? new Types.ObjectId(actor.id) : null,
+              actorRole: actor.role,
+              from: current.status,
+              to: status,
+              createdAt: new Date(),
+            },
+          },
+        },
         { new: true, runValidators: true },
       )
       if (!updated) throw new HttpError(409, 'ORDER_STATUS_CHANGED', 'Order status changed; reload and try again')
@@ -405,6 +505,16 @@ export class MongoOrdersService implements OrdersService {
             ? { 'deliveryAssignment.status': status === 'cancelled' ? 'cancelled' : 'delivered' }
             : {}),
         },
+        $push: {
+          events: {
+            type: 'order_status_changed',
+            actorId: actor.id ? new Types.ObjectId(actor.id) : null,
+            actorRole: actor.role,
+            from: current.status,
+            to: status,
+            createdAt: new Date(),
+          },
+        },
         $unset: { reservationTargetStatus: 1 },
       },
       { new: true, runValidators: true },
@@ -417,9 +527,10 @@ export class MongoOrdersService implements OrdersService {
     return publicOrder(updated, true)
   }
 
-  async assignDelivery(orderId: string, input: DeliveryAssignmentInput) {
+  async assignDelivery(orderId: string, input: DeliveryAssignmentInput, actor: OrderEventActor = { id: '', role: 'system' }) {
     const current = await Order.findById(orderId)
     if (!current) throw new HttpError(404, 'ORDER_NOT_FOUND', 'Order not found')
+    assertEventCapacity(current)
     if (['delivered', 'cancelled', 'out_for_delivery'].includes(current.status)) {
       throw new HttpError(409, 'DELIVERY_ASSIGNMENT_LOCKED', 'Delivery details cannot be changed after dispatch or order completion')
     }
@@ -460,6 +571,16 @@ export class MongoOrdersService implements OrdersService {
           'deliveryAssignment.status': 'assigned',
           ...assignmentFields,
         },
+        $push: {
+          events: {
+            type: 'delivery_assigned',
+            actorId: actor.id ? new Types.ObjectId(actor.id) : null,
+            actorRole: actor.role,
+            from: current.deliveryAssignment?.method ?? null,
+            to: input.method,
+            createdAt: new Date(),
+          },
+        },
         $unset: unsetFields,
       },
       { new: true, runValidators: true },
@@ -468,9 +589,10 @@ export class MongoOrdersService implements OrdersService {
     return publicOrder(updated, true)
   }
 
-  async updateDeliveryStatus(orderId: string, status: string) {
+  async updateDeliveryStatus(orderId: string, status: string, actor: OrderEventActor = { id: '', role: 'system' }) {
     const current = await Order.findById(orderId)
     if (!current) throw new HttpError(404, 'ORDER_NOT_FOUND', 'Order not found')
+    assertEventCapacity(current)
     if (['delivered', 'cancelled'].includes(current.status)) {
       throw new HttpError(409, 'DELIVERY_STATUS_LOCKED', 'Delivery status follows the completed or cancelled order')
     }
@@ -493,7 +615,19 @@ export class MongoOrdersService implements OrdersService {
         status: current.status,
         'deliveryAssignment.status': currentDeliveryStatus,
       },
-      { $set: { 'deliveryAssignment.status': status } },
+      {
+        $set: { 'deliveryAssignment.status': status },
+        $push: {
+          events: {
+            type: 'delivery_status_changed',
+            actorId: actor.id ? new Types.ObjectId(actor.id) : null,
+            actorRole: actor.role,
+            from: currentDeliveryStatus,
+            to: status,
+            createdAt: new Date(),
+          },
+        },
+      },
       { new: true, runValidators: true },
     )
     if (!updated) throw new HttpError(409, 'DELIVERY_STATUS_CHANGED', 'Delivery status changed; reload and try again')
@@ -524,7 +658,18 @@ export class MongoOrdersService implements OrdersService {
         },
         {
           $inc: { reservedGrams: grams },
-          $push: { reservations: { orderId: orderObjectId, grams } },
+          $push: {
+            reservations: { orderId: orderObjectId, grams },
+            movements: {
+              operationId: `order:${orderId}:reserved`,
+              actorId: null,
+              orderId: orderObjectId,
+              deltaGrams: 0,
+              reservedDeltaGrams: grams,
+              reason: 'order_reserved',
+              createdAt: new Date(),
+            },
+          },
         },
       )
       if (result.modifiedCount === 1) continue
@@ -553,7 +698,19 @@ export class MongoOrdersService implements OrdersService {
         await this.releaseReservations(orderId, reservations)
         await Order.updateOne(
           { _id: orderId, stockReservationState: 'reserving' },
-          { $set: { stockReservationState: 'released', status: 'cancelled' } },
+          {
+            $set: { stockReservationState: 'released', status: 'cancelled' },
+            $push: {
+              events: {
+                type: 'order_status_changed',
+                actorId: null,
+                actorRole: 'system',
+                from: 'pending',
+                to: 'cancelled',
+                createdAt: new Date(),
+              },
+            },
+          },
         )
       }
       throw error
@@ -573,6 +730,17 @@ export class MongoOrdersService implements OrdersService {
         {
           $inc: { reservedGrams: -grams },
           $pull: { reservations: { orderId: orderObjectId, grams } },
+          $push: {
+            movements: {
+              operationId: `order:${orderId}:released`,
+              actorId: null,
+              orderId: orderObjectId,
+              deltaGrams: 0,
+              reservedDeltaGrams: -grams,
+              reason: 'order_released',
+              createdAt: new Date(),
+            },
+          },
         },
       )
       if (result.modifiedCount === 1) continue
@@ -595,6 +763,17 @@ export class MongoOrdersService implements OrdersService {
         {
           $inc: { onHandGrams: -grams, reservedGrams: -grams },
           $pull: { reservations: { orderId: orderObjectId, grams } },
+          $push: {
+            movements: {
+              operationId: `order:${orderId}:fulfilled`,
+              actorId: null,
+              orderId: orderObjectId,
+              deltaGrams: -grams,
+              reservedDeltaGrams: -grams,
+              reason: 'order_fulfilled',
+              createdAt: new Date(),
+            },
+          },
         },
       )
       if (result.modifiedCount === 1) continue

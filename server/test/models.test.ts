@@ -78,6 +78,24 @@ describe('foundation model validation and indexes', () => {
     expect(Stock.schema.indexes()).toContainEqual([{ 'reservations.orderId': 1 }, { background: true }])
   })
 
+  it('stores idempotent stock movements in the stock document', () => {
+    const stock = new Stock({
+      productId: '507f1f77bcf86cd799439011',
+      onHandGrams: 1000,
+      reservedGrams: 500,
+      movements: [{
+        operationId: 'admin:adjustment-key',
+        actorId: '507f1f77bcf86cd799439012',
+        deltaGrams: -250,
+        reservedDeltaGrams: 0,
+        reason: 'spoilage',
+        createdAt: new Date(),
+      }],
+    })
+    expect(stock.validateSync()).toBeUndefined()
+    expect(stock.movements[0].operationId).toBe('admin:adjustment-key')
+  })
+
   it('stores prices as integer paise', () => {
     const price = new DailyPrice({
       productId: '507f1f77bcf86cd799439011',
@@ -113,5 +131,24 @@ describe('foundation model validation and indexes', () => {
 
     expect(errors?.customerUserId).toBeDefined()
     expect(Order.schema.path('stockReservationState')?.options.enum).toContain('reserving')
+  })
+
+  it('stores append-only order events with constrained event types and actors', () => {
+    const order = new Order({
+      customerUserId: '507f1f77bcf86cd799439011',
+      customerName: 'Ananya Rao',
+      customerPhone: '+919876543210',
+      address: { line: '12 Lake View Road', locality: 'Banjara Hills', city: 'Hyderabad', postalCode: '500034' },
+      deliveryMethod: 'shop',
+      items: [{ productId: '507f1f77bcf86cd799439013', productName: 'White Prawns', preparation: 'cleaned', weightGrams: 500, quantity: 1, pricePerKgPaise: 68000, preparationFeePaise: 0, lineTotalPaise: 34000 }],
+      subtotalPaise: 34000,
+      deliveryFeePaise: 4000,
+      totalPaise: 38000,
+      idempotencyKey: 'key',
+      requestFingerprint: 'fingerprint',
+      events: [{ type: 'order_status_changed', actorRole: 'admin', from: 'pending', to: 'confirmed' }],
+    })
+    expect(order.validateSync()).toBeUndefined()
+    expect(order.events[0].type).toBe('order_status_changed')
   })
 })

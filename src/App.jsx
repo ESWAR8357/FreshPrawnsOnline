@@ -6,6 +6,7 @@ import {
   Sparkles, Truck, X,
 } from 'lucide-react'
 import { buildDeliveryAssignmentPayload, deliveryStatusLabel, toCustomerDelivery } from './delivery.js'
+import { parseStockDelta, rupeesToPaise } from './admin.js'
 import './App.css'
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || ''
@@ -523,6 +524,7 @@ function TrackPage({ order, authToken }) {
   const [lookupBusy, setLookupBusy] = useState(false)
   const orderId = searchParams.get('order')
   const [loadedOrder, setLoadedOrder] = useState(null)
+  const [eventsState, setEventsState] = useState({ orderId: '', events: [], error: '' })
   useEffect(() => {
     if (!orderId || !authToken) return undefined
     let active = true
@@ -535,6 +537,21 @@ function TrackPage({ order, authToken }) {
     return () => { active = false }
   }, [orderId, authToken])
   const shownOrder = hasSearched ? foundOrder : (order?.orderId === orderId ? order : loadedOrder || order)
+  useEffect(() => {
+    if (!shownOrder?.orderId || !authToken) {
+      return undefined
+    }
+    let active = true
+    apiRequest(`/api/v1/orders/${encodeURIComponent(shownOrder.orderId)}/events`, { token: authToken })
+      .then(({ data }) => {
+        if (!active) return
+        setEventsState({ orderId: shownOrder.orderId, events: data, error: '' })
+      })
+      .catch((error) => { if (active) setEventsState({ orderId: shownOrder.orderId, events: [], error: error.message || 'Could not load order history.' }) })
+    return () => { active = false }
+  }, [shownOrder?.orderId, authToken])
+  const orderEvents = eventsState.orderId === shownOrder?.orderId ? eventsState.events : []
+  const eventsError = eventsState.orderId === shownOrder?.orderId ? eventsState.error : ''
   const searchOrders = async (event) => {
     event.preventDefault()
     setHasSearched(true)
@@ -566,7 +583,7 @@ function TrackPage({ order, authToken }) {
   return <main className="page-main tracking-page"><div className="eyebrow">A LITTLE PEACE OF MIND</div><h1 className="page-heading">Track your order</h1><p className="tracking-intro">We'll keep you in the loop, from our counter to your door.</p>
     <form className="tracking-search" onSubmit={searchOrders}><label htmlFor="order-lookup">Order number</label><div><input id="order-lookup" value={lookup} onChange={(event) => setLookup(event.target.value)} placeholder="e.g. FP-123456" /><button className="button button-dark" type="submit" disabled={lookupBusy}>{lookupBusy ? 'Searching…' : 'Find order'} <ArrowRight size={16} /></button></div><small>Search uses orders linked to your signed-in account.</small></form>
     {lookupError && <p className="form-error" role="alert">{lookupError}</p>}
-    {shownOrder ? <section className="tracking-card"><div className="tracking-card-head"><div><span className="status-pill"><i /> {shownOrder.status === 'pending' ? 'Order received' : shownOrder.status}</span><h2>Order {shownOrder.id}</h2><p>Placed {shownOrder.createdAt}</p></div><strong>{money(shownOrder.total)}</strong></div><div className="tracking-steps">{steps.map((step, index) => <div className={`tracking-step ${index <= stage ? 'completed' : ''}`} key={step}><span className="tracking-step-icon">{index <= stage ? <Check size={15} /> : index === 1 ? <Fish size={15} /> : index === 2 ? <Truck size={15} /> : <PackageCheck size={15} />}</span><b>{step}</b>{index < steps.length - 1 && <span className="tracking-step-line" />}</div>)}</div><div className="tracking-order-meta"><div><MapPin size={16} /><span><b>Delivering to</b><small>{shownOrder.address || 'Hyderabad'}</small></span></div><div><Truck size={16} /><span><b>Delivery method</b><small>{shownOrder.deliveryMethod === 'partner' ? 'Third-party service' : 'Our delivery person'}</small></span></div><div><PackageCheck size={16} /><span><b>Delivery status</b><small>{deliveryStatusLabel(shownOrder.delivery?.status)}</small></span></div>{shownOrder.delivery?.method === 'shop' && shownOrder.delivery.personName && <div><Headset size={16} /><span><b>Delivery contact</b><small>{shownOrder.delivery.personName}{shownOrder.delivery.personPhone ? ` · ${shownOrder.delivery.personPhone}` : ''}</small></span></div>}{shownOrder.delivery?.method === 'third_party' && (shownOrder.delivery.serviceName || shownOrder.delivery.reference) && <div><PackageCheck size={16} /><span><b>Delivery reference</b><small>{[shownOrder.delivery.serviceName, shownOrder.delivery.reference].filter(Boolean).join(' · ')}</small></span></div>}</div><p className="tracking-demo">Order and manual delivery updates are loaded from the API. Live location and provider updates are not connected.</p></section> : <div className="tracking-empty"><div className="tracking-empty-icon"><PackageCheck size={29} /></div><h2>No order to show just yet</h2><p>Place an order while signed in, or search for an order linked to your account.</p><Link to="/shop" className="text-link">Browse fresh prawns <ArrowRight size={16} /></Link></div>}
+    {shownOrder ? <section className="tracking-card"><div className="tracking-card-head"><div><span className="status-pill"><i /> {shownOrder.status === 'pending' ? 'Order received' : shownOrder.status}</span><h2>Order {shownOrder.id}</h2><p>Placed {shownOrder.createdAt}</p></div><strong>{money(shownOrder.total)}</strong></div><div className="tracking-steps">{steps.map((step, index) => <div className={`tracking-step ${index <= stage ? 'completed' : ''}`} key={step}><span className="tracking-step-icon">{index <= stage ? <Check size={15} /> : index === 1 ? <Fish size={15} /> : index === 2 ? <Truck size={15} /> : <PackageCheck size={15} />}</span><b>{step}</b>{index < steps.length - 1 && <span className="tracking-step-line" />}</div>)}</div><div className="tracking-order-meta"><div><MapPin size={16} /><span><b>Delivering to</b><small>{shownOrder.address || 'Hyderabad'}</small></span></div><div><Truck size={16} /><span><b>Delivery method</b><small>{shownOrder.deliveryMethod === 'partner' ? 'Third-party service' : 'Our delivery person'}</small></span></div><div><PackageCheck size={16} /><span><b>Delivery status</b><small>{deliveryStatusLabel(shownOrder.delivery?.status)}</small></span></div>{shownOrder.delivery?.method === 'shop' && shownOrder.delivery.personName && <div><Headset size={16} /><span><b>Delivery contact</b><small>{shownOrder.delivery.personName}{shownOrder.delivery.personPhone ? ` · ${shownOrder.delivery.personPhone}` : ''}</small></span></div>}{shownOrder.delivery?.method === 'third_party' && (shownOrder.delivery.serviceName || shownOrder.delivery.reference) && <div><PackageCheck size={16} /><span><b>Delivery reference</b><small>{[shownOrder.delivery.serviceName, shownOrder.delivery.reference].filter(Boolean).join(' · ')}</small></span></div>}</div><section className="order-event-history" aria-labelledby="customer-order-history"><h3 id="customer-order-history">Order updates</h3>{eventsError && <p className="form-error" role="alert">{eventsError}</p>}{orderEvents.length ? <ol>{orderEvents.map((item) => <li key={item.id}><b>{item.type.replaceAll('_', ' ')}</b><small>{item.from && item.to ? `${item.from.replaceAll('_', ' ')} → ${item.to.replaceAll('_', ' ')}` : item.to?.replaceAll('_', ' ')}</small><time dateTime={item.createdAt}>{new Date(item.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</time></li>)}</ol> : !eventsError && <p>No updates recorded yet.</p>}</section><p className="tracking-demo">Order and manual delivery updates are loaded from the API. Live location and provider updates are not connected.</p></section> : <div className="tracking-empty"><div className="tracking-empty-icon"><PackageCheck size={29} /></div><h2>No order to show just yet</h2><p>Place an order while signed in, or search for an order linked to your account.</p><Link to="/shop" className="text-link">Browse fresh prawns <ArrowRight size={16} /></Link></div>}
     <div className="tracking-support"><Headset size={18} /><span>Need a hand? <a href="tel:+914040001234">Call our shop at +91 40 4000 1234</a></span></div>
   </main>
 }
@@ -656,7 +673,7 @@ function AdminPage({ products, catalogueStatus, catalogueError, onRetry, current
   if (!currentUser) return <main className="page-main account-page"><div className="account-card"><div className="eyebrow">SHOP ADMIN</div><h1>Administrator sign-in required</h1><p>Admin access is verified by the API. Create the first admin account using the server’s secure setup command.</p><Link className="button button-dark" to="/account" state={{ from: '/admin' }}>Sign in <ArrowRight size={16} /></Link></div></main>
   if (currentUser.role !== 'admin') return <main className="page-main account-page"><div className="account-card"><div className="eyebrow">SHOP ADMIN</div><h1>Administrator access only</h1><p>This customer account cannot open the shop dashboard.</p><Link className="button button-outline" to="/">Back to storefront</Link></div></main>
 
-  return <main className="admin-page"><aside className="admin-sidebar"><Link to="/" className="admin-brand"><span className="brand-mark"><Fish size={21} /></span><span>Fresh Prawns<small>SHOP ADMIN</small></span></Link><div className="admin-side-label">WORKSPACE</div><nav aria-label="Admin navigation">{tabs.map((item) => <button className={tab === item.id ? 'admin-nav-item active' : 'admin-nav-item'} key={item.id} onClick={() => setTab(item.id)} type="button">{item.id === 'overview' ? <SlidersHorizontal size={17} /> : item.id === 'products' ? <Fish size={17} /> : <PackageCheck size={17} />}{item.label}{item.id === 'orders' && <span className="nav-count">{orders.length}</span>}</button>)}</nav><div className="admin-sidebar-bottom"><span className="admin-avatar">A</span><span><b>{currentUser.email}</b><small>Shop administrator</small></span></div></aside><div className="admin-content"><div className="admin-topbar"><div className="admin-breadcrumb">Workspace <span>/</span> <b>{tabs.find((item) => item.id === tab)?.label}</b></div><Link to="/" className="view-store-link"><ArrowLeft size={14} /> View storefront</Link></div><div className="admin-main-content">{tab === 'overview' && <AdminOverview products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={onRetry} orders={orders} setTab={setTab} />}{tab === 'products' && <AdminProducts products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={onRetry} />}{tab === 'orders' && <><AdminOrders orders={orders} selectedOrder={selectedOrder} setSelectedOrder={setSelectedOrder} onUpdateOrder={updateOrder} statusError={statusError} />{ordersStatus === 'loading' && <div role="status">Loading orders…</div>}{ordersStatus === 'error' && <div role="alert" className="form-error">{ordersError}<button type="button" onClick={() => { setOrdersStatus('loading'); setOrdersRetry((count) => count + 1) }}> Try again</button></div>}</>}</div></div></main>
+  return <main className="admin-page"><aside className="admin-sidebar"><Link to="/" className="admin-brand"><span className="brand-mark"><Fish size={21} /></span><span>Fresh Prawns<small>SHOP ADMIN</small></span></Link><div className="admin-side-label">WORKSPACE</div><nav aria-label="Admin navigation">{tabs.map((item) => <button className={tab === item.id ? 'admin-nav-item active' : 'admin-nav-item'} key={item.id} onClick={() => setTab(item.id)} type="button">{item.id === 'overview' ? <SlidersHorizontal size={17} /> : item.id === 'products' ? <Fish size={17} /> : <PackageCheck size={17} />}{item.label}{item.id === 'orders' && <span className="nav-count">{orders.length}</span>}</button>)}</nav><div className="admin-sidebar-bottom"><span className="admin-avatar">A</span><span><b>{currentUser.email}</b><small>Shop administrator</small></span></div></aside><div className="admin-content"><div className="admin-topbar"><div className="admin-breadcrumb">Workspace <span>/</span> <b>{tabs.find((item) => item.id === tab)?.label}</b></div><Link to="/" className="view-store-link"><ArrowLeft size={14} /> View storefront</Link></div><div className="admin-main-content">{tab === 'overview' && <AdminOverview products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={onRetry} orders={orders} setTab={setTab} />}{tab === 'products' && <AdminProducts products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={onRetry} authToken={authToken} />}{tab === 'orders' && <><AdminOrders orders={orders} selectedOrder={selectedOrder} setSelectedOrder={setSelectedOrder} onUpdateOrder={updateOrder} statusError={statusError} authToken={authToken} />{ordersStatus === 'loading' && <div role="status">Loading orders…</div>}{ordersStatus === 'error' && <div role="alert" className="form-error">{ordersError}<button type="button" onClick={() => { setOrdersStatus('loading'); setOrdersRetry((count) => count + 1) }}> Try again</button></div>}</>}</div></div></main>
 }
 
 function AdminOverview({ products, catalogueStatus, catalogueError, onRetry, orders, setTab }) {
@@ -723,15 +740,243 @@ function Metric({ label, value, change, icon }) {
   return <div className="metric-card"><span className="metric-icon">{icon}</span><small>{label}</small><strong>{value}</strong><span className="metric-change">{change}</span></div>
 }
 
-function AdminProducts({ products, catalogueStatus, catalogueError, onRetry }) {
+function AdminProducts({ products, catalogueStatus, catalogueError, onRetry, authToken }) {
+  const [adminProducts, setAdminProducts] = useState([])
+  const [stockRows, setStockRows] = useState([])
+  const [priceHistory, setPriceHistory] = useState([])
+  const [movementHistory, setMovementHistory] = useState([])
+  const [historyError, setHistoryError] = useState('')
+  const [selectedProductId, setSelectedProductId] = useState('')
+  const [dataStatus, setDataStatus] = useState('loading')
+  const [dataError, setDataError] = useState('')
+  const [actionError, setActionError] = useState('')
+  const [actionSuccess, setActionSuccess] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [reload, setReload] = useState(0)
+  useEffect(() => {
+    let active = true
+    Promise.all([
+      apiRequest('/api/v1/admin/products?limit=100', { token: authToken }),
+      apiRequest('/api/v1/admin/stock?limit=100', { token: authToken }),
+    ]).then(([productResponse, stockResponse]) => {
+      if (!active) return
+      const nextProducts = productResponse.data.items
+      setAdminProducts(nextProducts)
+      setStockRows(stockResponse.data.items)
+      setSelectedProductId((selected) => nextProducts.some((product) => product._id === selected)
+        ? selected
+        : nextProducts[0]?._id || '')
+      setDataStatus('ready')
+      setDataError('')
+    }).catch((error) => {
+      if (!active) return
+      setDataError(error.message || 'Could not load product and stock management data.')
+      setDataStatus('error')
+    })
+    return () => { active = false }
+  }, [authToken, reload])
+
+  const selectedProduct = adminProducts.find((product) => product._id === selectedProductId)
+  useEffect(() => {
+    if (!selectedProductId || !authToken) return undefined
+    let active = true
+    Promise.all([
+      apiRequest(`/api/v1/admin/products/${selectedProductId}/prices?limit=20`, { token: authToken }),
+      apiRequest(`/api/v1/admin/stock/${selectedProductId}/movements?limit=20`, { token: authToken }),
+    ]).then(([prices, movements]) => {
+      if (!active) return
+      setPriceHistory(prices.data.items)
+      setMovementHistory(movements.data.items)
+      setHistoryError('')
+    }).catch((error) => {
+      if (active) setHistoryError(error.message || 'Could not load price and stock history.')
+    })
+    return () => { active = false }
+  }, [selectedProductId, authToken, reload])
+  const submitAction = async (event, action) => {
+    event.preventDefault()
+    const formElement = event.currentTarget
+    setSaving(true)
+    setActionError('')
+    setActionSuccess('')
+    try {
+      await action(new FormData(formElement))
+      setActionSuccess('Saved successfully.')
+      setReload((count) => count + 1)
+      onRetry()
+      formElement.reset()
+    } catch (error) {
+      setActionError(error.message || 'Could not save this change.')
+    } finally {
+      setSaving(false)
+    }
+  }
+  const activeOptions = (form) => {
+    const options = []
+    if (form.get('cleanedEnabled') === 'on') {
+      options.push({ type: 'cleaned', enabled: true, feePaise: form.get('cleaningFee') ? rupeesToPaise(form.get('cleaningFee'), { allowZero: true }) : 0 })
+    }
+    if (form.get('uncleanedEnabled') === 'on') options.push({ type: 'uncleaned', enabled: true, feePaise: 0 })
+    if (!options.length) throw new Error('Enable at least one preparation option.')
+    return options
+  }
+  const productPayload = (form) => ({
+    slug: String(form.get('slug')).trim(),
+    name: String(form.get('name')).trim(),
+    description: String(form.get('description')).trim(),
+    longDescription: String(form.get('longDescription')).trim(),
+    size: form.get('size'),
+    origin: String(form.get('origin')).trim(),
+    badge: String(form.get('badge')).trim(),
+    imageUrl: String(form.get('imageUrl')).trim() || null,
+    active: form.get('active') === 'on',
+    preparationOptions: activeOptions(form),
+  })
+  const createProduct = async (form) => {
+    await apiRequest('/api/v1/admin/products', {
+      method: 'POST',
+      token: authToken,
+      body: JSON.stringify(productPayload(form)),
+    })
+  }
+  const updateProduct = async (event) => {
+    event.preventDefault()
+    if (!selectedProduct) return
+    setSaving(true)
+    setActionError('')
+    setActionSuccess('')
+    try {
+      const form = new FormData(event.currentTarget)
+      const patch = productPayload(form)
+      delete patch.slug
+      await apiRequest(`/api/v1/admin/products/${selectedProduct._id}`, {
+        method: 'PATCH',
+        token: authToken,
+        body: JSON.stringify(patch),
+      })
+      setActionSuccess('Product updated.')
+      setReload((count) => count + 1)
+      onRetry()
+    } catch (error) {
+      setActionError(error.message || 'Could not update this product.')
+    } finally {
+      setSaving(false)
+    }
+  }
+  const addPrice = async (form) => {
+    if (!selectedProduct) throw new Error('Choose a product first.')
+    await apiRequest(`/api/v1/admin/products/${selectedProduct._id}/prices`, {
+      method: 'POST',
+      token: authToken,
+      body: JSON.stringify({
+        effectiveDate: form.get('effectiveDate'),
+        pricePerKgPaise: rupeesToPaise(form.get('pricePerKg')),
+      }),
+    })
+  }
+  const adjustStock = async (form) => {
+    const productId = form.get('stockProductId')
+    await apiRequest(`/api/v1/admin/stock/${productId}/adjustments`, {
+      method: 'POST',
+      token: authToken,
+      body: JSON.stringify({
+        idempotencyKey: crypto.randomUUID(),
+        deltaGrams: parseStockDelta(form.get('deltaGrams')),
+        reason: form.get('reason'),
+        reference: String(form.get('reference')).trim() || undefined,
+      }),
+    })
+  }
+  const stockByProduct = new Map(stockRows.map((row) => [row.product._id, row]))
+  const priceBySlug = new Map(products.map((product) => [product.slug, product]))
   return <>
     <div className="admin-page-heading">
-      <div><div className="eyebrow">YOUR CATCH, YOUR CALL</div><h1>Products & daily pricing</h1><p>Catalogue, current price and available stock are loaded from the API.</p></div>
-      <button className="button button-dark admin-add-product" type="button" disabled><Plus size={16} /> Add product</button>
+      <div><div className="eyebrow">YOUR CATCH, YOUR CALL</div><h1>Products & daily pricing</h1><p>Manage the catalogue, daily prices and stock using protected APIs.</p></div>
     </div>
+    {dataStatus === 'loading' && <p role="status">Loading management data…</p>}
+    {dataStatus === 'error' && <p className="form-error" role="alert">{dataError}<button type="button" onClick={() => setReload((count) => count + 1)}> Try again</button></p>}
+    {actionError && <p className="form-error" role="alert">{actionError}</p>}
+    {actionSuccess && <p className="form-success" role="status">{actionSuccess}</p>}
+    <div className="admin-phase6-grid">
+      <section className="admin-card admin-phase6-card">
+        <div className="admin-card-heading"><div><h2>Add product</h2><p>New products start active with no price or stock.</p></div></div>
+        <form className="admin-phase6-form" onSubmit={(event) => submitAction(event, createProduct)}>
+          <label>Product name<input name="name" required minLength="2" maxLength="120" /></label>
+          <label>URL slug<input name="slug" required pattern="[a-z0-9]+(-[a-z0-9]+)*" maxLength="120" /></label>
+          <label>Size<select name="size"><option>Small</option><option>Medium</option><option>Large</option></select></label>
+          <label>Origin<input name="origin" maxLength="120" defaultValue="Coastal catch" /></label>
+          <label>Short description<textarea name="description" rows="2" maxLength="2000" /></label>
+          <label>Full description<textarea name="longDescription" rows="3" maxLength="4000" /></label>
+          <label>Image HTTPS URL<input name="imageUrl" type="url" pattern="https://.*" /></label>
+          <label>Badge<input name="badge" maxLength="40" /></label>
+          <label className="admin-check"><input name="cleanedEnabled" type="checkbox" defaultChecked /> Cleaned option</label>
+          <label>Cleaning fee (₹)<input name="cleaningFee" type="number" min="0" max="1000" step="0.01" defaultValue="0" /></label>
+          <label className="admin-check"><input name="uncleanedEnabled" type="checkbox" defaultChecked /> Uncleaned option</label>
+          <button type="submit" className="button button-dark" disabled={saving || dataStatus !== 'ready'}>{saving ? 'Saving…' : 'Create product'}</button>
+        </form>
+      </section>
+      <section className="admin-card admin-phase6-card">
+        <div className="admin-card-heading"><div><h2>Update product</h2><p>Deactivate to hide a product without deleting order history.</p></div></div>
+        <label className="admin-phase6-select">Product<select value={selectedProductId} onChange={(event) => setSelectedProductId(event.target.value)}><option value="">Choose product</option>{adminProducts.map((product) => <option key={product._id} value={product._id}>{product.name}{product.active ? '' : ' (inactive)'}</option>)}</select></label>
+        {selectedProduct && <form className="admin-phase6-form" key={selectedProduct._id} onSubmit={updateProduct}>
+          <label>Name<input name="name" required minLength="2" maxLength="120" defaultValue={selectedProduct.name} /></label>
+          <label>Slug<input name="slug" required pattern="[a-z0-9]+(-[a-z0-9]+)*" maxLength="120" defaultValue={selectedProduct.slug} /></label>
+          <label>Size<select name="size" defaultValue={selectedProduct.size}><option>Small</option><option>Medium</option><option>Large</option></select></label>
+          <label>Origin<input name="origin" maxLength="120" defaultValue={selectedProduct.origin} /></label>
+          <label>Description<textarea name="description" rows="2" maxLength="2000" defaultValue={selectedProduct.description} /></label>
+          <label>Full description<textarea name="longDescription" rows="3" maxLength="4000" defaultValue={selectedProduct.longDescription} /></label>
+          <label>Image HTTPS URL<input name="imageUrl" type="url" pattern="https://.*" defaultValue={selectedProduct.imageUrl || ''} /></label>
+          <label>Badge<input name="badge" maxLength="40" defaultValue={selectedProduct.badge} /></label>
+          <label className="admin-check"><input name="cleanedEnabled" type="checkbox" defaultChecked={selectedProduct.preparationOptions.some((option) => option.type === 'cleaned' && option.enabled)} /> Cleaned option</label>
+          <label>Cleaning fee (₹)<input name="cleaningFee" type="number" min="0" max="1000" step="0.01" defaultValue={(selectedProduct.preparationOptions.find((option) => option.type === 'cleaned')?.feePaise || 0) / 100} /></label>
+          <label className="admin-check"><input name="uncleanedEnabled" type="checkbox" defaultChecked={selectedProduct.preparationOptions.some((option) => option.type === 'uncleaned' && option.enabled)} /> Uncleaned option</label>
+          <label className="admin-check"><input name="active" type="checkbox" defaultChecked={selectedProduct.active} /> Product is active</label>
+          <button type="submit" className="button button-outline" disabled={saving}>{saving ? 'Saving…' : 'Save product changes'}</button>
+        </form>}
+      </section>
+      <section className="admin-card admin-phase6-card">
+        <div className="admin-card-heading"><div><h2>Set daily price</h2><p>Effective at midnight Hyderabad time; future dates can be scheduled.</p></div></div>
+        <form className="admin-phase6-form" onSubmit={(event) => submitAction(event, addPrice)}>
+          <label>Product<select value={selectedProductId} onChange={(event) => setSelectedProductId(event.target.value)} required>{adminProducts.map((product) => <option key={product._id} value={product._id}>{product.name}</option>)}</select></label>
+          <label>Effective date<input name="effectiveDate" type="date" required defaultValue={new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })} /></label>
+          <label>Price per kg (₹)<input name="pricePerKg" type="number" min="0.01" max="10000000" step="0.01" required /></label>
+          <button type="submit" className="button button-dark" disabled={saving || !adminProducts.length}>{saving ? 'Saving…' : 'Add price'}</button>
+        </form>
+      </section>
+      <section className="admin-card admin-phase6-card">
+        <div className="admin-card-heading"><div><h2>Adjust stock</h2><p>Use a positive quantity for stock received, negative for reductions.</p></div></div>
+        <form className="admin-phase6-form" onSubmit={(event) => submitAction(event, adjustStock)}>
+          <label>Product<select name="stockProductId" required>{adminProducts.map((product) => <option key={product._id} value={product._id}>{product.name}</option>)}</select></label>
+          <label>Change (grams)<input name="deltaGrams" type="number" min="-1000000" max="1000000" step="1" required /></label>
+          <label>Reason<select name="reason"><option value="received">Received</option><option value="spoilage">Spoilage</option><option value="correction">Correction</option><option value="other">Other</option></select></label>
+          <label>Reference / note<input name="reference" maxLength="160" /></label>
+          <button type="submit" className="button button-dark" disabled={saving || !adminProducts.length}>{saving ? 'Saving…' : 'Record stock adjustment'}</button>
+        </form>
+      </section>
+    </div>
+    {dataStatus === 'ready' && <section className="admin-card products-table-card">
+      <div className="admin-table-top"><div><h2>Stock and catalogue</h2><p>Reserved quantities are controlled by orders and cannot be changed here.</p></div><span className="catalogue-count">{adminProducts.length} products</span></div>
+      <div className="table-scroll"><table className="admin-table"><thead><tr><th>PRODUCT</th><th>PRICE / KG</th><th>ON HAND</th><th>RESERVED</th><th>AVAILABLE</th><th>LIVE</th></tr></thead><tbody>{adminProducts.map((product) => {
+        const stock = stockByProduct.get(product._id)
+        const price = priceBySlug.get(product.slug)
+        return <tr key={product._id}><td><div className="table-product"><span><b>{product.name}</b><small>{product.size} · {product.origin}</small></span></div></td><td>{price?.pricePerKg === null || !price ? 'Not set' : money(price.pricePerKg)}</td><td>{formatWeight(stock?.onHandGrams || 0)}</td><td>{formatWeight(stock?.reservedGrams || 0)}</td><td>{formatWeight(stock?.availableGrams || 0)}</td><td>{product.active ? 'Active' : 'Inactive'}</td></tr>
+      })}</tbody></table></div>
+      <div className="admin-table-footer"><Sparkles size={15} /> Each stock balance change and its audit movement are recorded atomically.</div>
+    </section>}
+    {selectedProduct && <div className="admin-phase6-grid">
+      <section className="admin-card products-table-card">
+        <div className="admin-table-top"><div><h2>Price history · {selectedProduct.name}</h2><p>Effective dates use the Asia/Kolkata calendar.</p></div></div>
+        {historyError && <p className="form-error" role="alert">{historyError}</p>}
+        {priceHistory.length ? <div className="table-scroll"><table className="admin-table"><thead><tr><th>EFFECTIVE FROM</th><th>PRICE / KG</th><th>SET BY</th></tr></thead><tbody>{priceHistory.map((price) => <tr key={price._id}><td>{new Date(price.effectiveFrom).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' })}</td><td>{money(price.pricePerKgPaise / 100)}</td><td>{price.changedById ? 'Admin' : 'System'}</td></tr>)}</tbody></table></div> : !historyError && <p className="admin-demo-hint">No price history recorded.</p>}
+      </section>
+      <section className="admin-card products-table-card">
+        <div className="admin-table-top"><div><h2>Stock movements · {selectedProduct.name}</h2><p>Recent adjustments, reservations, releases and fulfillment.</p></div></div>
+        {movementHistory.length ? <div className="table-scroll"><table className="admin-table"><thead><tr><th>RECORDED</th><th>REASON</th><th>ON-HAND Δ</th><th>RESERVED Δ</th></tr></thead><tbody>{movementHistory.map((movement) => <tr key={movement._id || movement.operationId}><td>{new Date(movement.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</td><td>{movement.reason.replaceAll('_', ' ')}</td><td>{movement.deltaGrams > 0 ? '+' : ''}{formatWeight(movement.deltaGrams)}</td><td>{movement.reservedDeltaGrams > 0 ? '+' : ''}{formatWeight(movement.reservedDeltaGrams || 0)}</td></tr>)}</tbody></table></div> : !historyError && <p className="admin-demo-hint">No stock movements recorded.</p>}
+      </section>
+    </div>}
     <div className="admin-card products-table-card">
       <div className="admin-table-top">
-        <div><h2>Product catalogue</h2><p>Read-only in this stage. Product and stock editing remain future work.</p></div>
+        <div><h2>Public catalogue preview</h2><p>Only active products are shown to customers.</p></div>
         <span className="catalogue-count">{products.length} products</span>
       </div>
       {catalogueStatus !== 'ready'
@@ -739,15 +984,32 @@ function AdminProducts({ products, catalogueStatus, catalogueError, onRetry }) {
         : products.length
           ? <div className="table-scroll"><table className="admin-table"><thead><tr><th>PRODUCT</th><th>PRICE / KG</th><th>AVAILABLE STOCK</th><th>AVAILABILITY</th><th>LIVE</th></tr></thead><tbody>{products.map((product) => <tr key={product.id}><td><div className="table-product">{product.image && <img src={product.image} alt="" />}<span><b>{product.name}</b><small>{product.size} · {product.origin}</small></span></div></td><td>{product.pricePerKg === null ? 'Not set' : money(product.pricePerKg)}</td><td>{formatWeight(product.availableGrams)}</td><td><span className={product.stockKg < 3 ? 'stock-status low' : 'stock-status'}><i />{product.stockKg === 0 ? 'Out of stock' : product.stockKg < 3 ? 'Low stock' : 'In stock'}</span></td><td><span>{product.active ? 'Active' : 'Inactive'}</span></td></tr>)}</tbody></table></div>
           : <CatalogueFeedback status="empty" />}
-      <div className="admin-table-footer"><Sparkles size={15} /> Product, daily pricing, and stock write APIs are not enabled in this stage.</div>
+      <div className="admin-table-footer"><Sparkles size={15} /> Price history is append-only; existing orders retain their recorded prices.</div>
     </div>
-    <div className="admin-info-note"><BadgeCheck size={17} /><span><b>Public catalogue data.</b> Price and available weight reflect the current API response; editing is intentionally disabled.</span></div>
+    <div className="admin-info-note"><BadgeCheck size={17} /><span><b>Admin-only writes.</b> All changes are validated and authorized by the API.</span></div>
   </>
 }
 
-function AdminOrders({ orders, selectedOrder, setSelectedOrder, onUpdateOrder, statusError }) {
+function AdminOrders({ orders, selectedOrder, setSelectedOrder, onUpdateOrder, statusError, authToken }) {
   const current = orders.find((order) => order.id === selectedOrder?.id) || orders[0]
   const [deliveryEdits, setDeliveryEdits] = useState(null)
+  const [eventsState, setEventsState] = useState({ orderId: '', events: [], error: '' })
+  const [eventsRetry, setEventsRetry] = useState(0)
+  useEffect(() => {
+    if (!current?.rawId || !authToken) {
+      return undefined
+    }
+    let active = true
+    apiRequest(`/api/v1/orders/${encodeURIComponent(current.rawId)}/events`, { token: authToken })
+      .then(({ data }) => {
+        if (!active) return
+        setEventsState({ orderId: current.rawId, events: data, error: '' })
+      })
+      .catch((error) => { if (active) setEventsState({ orderId: current.rawId, events: [], error: error.message || 'Could not load order history.' }) })
+    return () => { active = false }
+  }, [current?.rawId, authToken, eventsRetry])
+  const orderEvents = eventsState.orderId === current?.rawId ? eventsState.events : []
+  const eventsError = eventsState.orderId === current?.rawId ? eventsState.error : ''
   const deliveryForm = current
     ? deliveryEdits?.orderId === current.rawId
       ? deliveryEdits.fields
@@ -768,7 +1030,11 @@ function AdminOrders({ orders, selectedOrder, setSelectedOrder, onUpdateOrder, s
       fields: { ...deliveryForm, [field]: value },
     })
   }
-  const updateOrder = (id, patch) => onUpdateOrder(id, patch)
+  const updateOrder = async (id, patch) => {
+    const updated = await onUpdateOrder(id, patch)
+    if (updated) setEventsRetry((count) => count + 1)
+    return updated
+  }
   const deliveryStatusTransitions = {
     assigned: ['picked_up', 'in_transit', 'exception'],
     picked_up: ['in_transit', 'exception'],
@@ -802,6 +1068,7 @@ function AdminOrders({ orders, selectedOrder, setSelectedOrder, onUpdateOrder, s
         <div className="order-detail-customer"><span className="order-list-avatar">{current.customer.split(' ').map((word) => word[0]).join('')}</span><span><b>{current.customer}</b><small>{current.phone}</small></span><a className="admin-text-button" href={`tel:${current.phone}`}>Contact</a></div>
         <div className="order-detail-address"><MapPin size={16} /><span><b>Delivery address</b><small>{current.address}</small></span></div>
         <div className="detail-products"><b>Items</b>{current.items.map((item, index) => <div key={`${item.name}-${index}`}><span>{item.name}<small>{item.detail}</small></span><strong>{money(item.price)}</strong></div>)}</div>
+        <section className="order-event-history admin-event-history" aria-labelledby="admin-order-history"><h3 id="admin-order-history">Order and delivery history</h3>{eventsError && <p className="form-error" role="alert">{eventsError}</p>}{orderEvents.length ? <ol>{orderEvents.map((item) => <li key={item.id}><b>{item.type.replaceAll('_', ' ')}</b><small>{item.actorRole}{item.from && item.to ? ` · ${item.from.replaceAll('_', ' ')} → ${item.to.replaceAll('_', ' ')}` : item.to ? ` · ${item.to.replaceAll('_', ' ')}` : ''}</small><time dateTime={item.createdAt}>{new Date(item.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</time></li>)}</ol> : !eventsError && <p>No updates recorded yet.</p>}</section>
         <section className="admin-delivery-assignment" aria-labelledby="delivery-assignment-heading">
           <div className="admin-delivery-heading"><div><h3 id="delivery-assignment-heading">Delivery assignment</h3><p>Status: {deliveryStatusLabel(current.delivery.status)}</p></div><span className="admin-status">{current.delivery.method === 'third_party' ? 'Third party' : 'Shop delivery'}</span></div>
           <form className="admin-delivery-form" onSubmit={saveDelivery}>

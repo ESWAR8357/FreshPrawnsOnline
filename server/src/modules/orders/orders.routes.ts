@@ -1,8 +1,8 @@
 import { Router } from 'express'
-import type { RequestHandler, Response } from 'express'
+import type { Request, RequestHandler, Response } from 'express'
 import { z } from 'zod'
 import { HttpError } from '../../http-error.js'
-import type { OrdersService } from './orders.service.js'
+import type { CustomerOrderFilters, OrdersService } from './orders.service.js'
 import { requireAdmin } from '../users/auth.middleware.js'
 
 const createOrderSchema = z.object({
@@ -46,6 +46,17 @@ const deliveryAssignmentSchema = z.discriminatedUnion('method', [
 const deliveryStatusSchema = z.object({
   status: z.enum(['assigned', 'picked_up', 'in_transit', 'exception']),
 }).strict()
+const orderListSchema = z.object({
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+  cursor: z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/).optional(),
+  status: z.enum(['pending', 'confirmed', 'preparing', 'out_for_delivery', 'delivered', 'cancelled']).optional(),
+  from: z.string().datetime({ offset: true }).optional(),
+  to: z.string().datetime({ offset: true }).optional(),
+}).strict().superRefine((query, context) => {
+  if (query.from && query.to && new Date(query.from).getTime() >= new Date(query.to).getTime()) {
+    context.addIssue({ code: 'custom', path: ['from'], message: 'from must be earlier than to' })
+  }
+})
 
 const orderIdSchema = z.string().regex(/^[a-f0-9]{24}$/i)
 
@@ -57,6 +68,14 @@ function invalidRequest(response: Response, issues: z.ZodIssue[]) {
       issues: issues.map(({ path, message }) => ({ path, message })),
     },
   })
+}
+
+function adminActor(request: Request) {
+  const user = request.authUser
+  if (!user || user.role !== 'admin') {
+    throw new HttpError(403, 'ADMIN_ACCESS_REQUIRED', 'Administrator access is required')
+  }
+  return { id: user.id, role: 'admin' as const }
 }
 
 export function createOrdersRouter(service: OrdersService, authenticate: RequestHandler): Router {
@@ -86,6 +105,11 @@ export function createOrdersRouter(service: OrdersService, authenticate: Request
   })
 
   router.get('/', async (request, response, next) => {
+    const parsedQuery = orderListSchema.safeParse(request.query)
+    if (!parsedQuery.success) {
+      invalidRequest(response, parsedQuery.error.issues)
+      return
+    }
     if (!request.authUser) {
       next(new HttpError(401, 'AUTHENTICATION_REQUIRED', 'Sign in to continue'))
       return
@@ -93,8 +117,18 @@ export function createOrdersRouter(service: OrdersService, authenticate: Request
     try {
       const orders = request.authUser.role === 'admin'
         ? await service.listForAdmin()
-        : await service.listForCustomer(request.authUser.id)
-      response.json({ data: orders })
+        : await service.listForCustomer(request.authUser.id, {
+            limit: parsedQuery.data.limit,
+            ...(parsedQuery.data.cursor ? { cursor: parsedQuery.data.cursor } : {}),
+            ...(parsedQuery.data.status ? { status: parsedQuery.data.status } : {}),
+            ...(parsedQuery.data.from ? { from: new Date(parsedQuery.data.from) } : {}),
+            ...(parsedQuery.data.to ? { to: new Date(parsedQuery.data.to) } : {}),
+          } satisfies CustomerOrderFilters)
+      if (Array.isArray(orders)) {
+        response.json({ data: orders })
+      } else {
+        response.json({ data: orders.items, pagination: { nextCursor: orders.nextCursor } })
+      }
     } catch (error) {
       next(error)
     }
@@ -116,6 +150,22 @@ export function createOrdersRouter(service: OrdersService, authenticate: Request
     }
   })
 
+  router.get('/:id/events', async (request, response, next) => {
+    const id = orderIdSchema.safeParse(request.params.id)
+    if (!id.success) {
+      invalidRequest(response, id.error.issues)
+      return
+    }
+    try {
+      const user = request.authUser
+      if (!user) throw new HttpError(401, 'AUTHENTICATION_REQUIRED', 'Sign in to continue')
+      const events = await service.listEvents(id.data, user.id, user.role === 'admin')
+      response.json({ data: events })
+    } catch (error) {
+      next(error)
+    }
+  })
+
   router.patch('/:id/status', requireAdmin, async (request, response, next) => {
     const id = orderIdSchema.safeParse(request.params.id)
     const body = statusSchema.safeParse(request.body)
@@ -124,7 +174,7 @@ export function createOrdersRouter(service: OrdersService, authenticate: Request
       return
     }
     try {
-      const order = await service.updateStatus(id.data, body.data.status)
+      const order = await service.updateStatus(id.data, body.data.status, adminActor(request))
       response.json({ data: order })
     } catch (error) {
       next(error)
@@ -139,7 +189,7 @@ export function createOrdersRouter(service: OrdersService, authenticate: Request
       return
     }
     try {
-      const order = await service.assignDelivery(id.data, body.data)
+      const order = await service.assignDelivery(id.data, body.data, adminActor(request))
       response.json({ data: order })
     } catch (error) {
       next(error)
@@ -154,7 +204,7 @@ export function createOrdersRouter(service: OrdersService, authenticate: Request
       return
     }
     try {
-      const order = await service.updateDeliveryStatus(id.data, body.data.status)
+      const order = await service.updateDeliveryStatus(id.data, body.data.status, adminActor(request))
       response.json({ data: order })
     } catch (error) {
       next(error)

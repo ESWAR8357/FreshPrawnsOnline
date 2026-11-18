@@ -16,10 +16,14 @@ import { createOrdersRouter } from './modules/orders/orders.routes.js'
 import { MongoOrdersService, type OrdersService } from './modules/orders/orders.service.js'
 import { HttpError } from './http-error.js'
 import { openApiSpec } from './openapi/spec.js'
+import { createAdminCatalogueRouter, type AdminCatalogueService } from './modules/admin/catalogue.routes.js'
+import { createAdminStockRouter, type AdminStockService } from './modules/admin/stock.routes.js'
 
 type AppServices = {
   auth?: AuthService
   orders?: OrdersService
+  adminCatalogue?: AdminCatalogueService
+  adminStock?: AdminStockService
 }
 
 export function buildApp(
@@ -89,6 +93,8 @@ export function buildApp(
     legacyHeaders: false,
   }), createAuthRouter(authService, config, authenticate))
   app.use('/api/v1/orders', createOrdersRouter(services.orders ?? new MongoOrdersService(), authenticate))
+  app.use('/api/v1/admin', createAdminCatalogueRouter(authenticate, services.adminCatalogue))
+  app.use('/api/v1/admin/stock', createAdminStockRouter(authenticate, services.adminStock))
   app.get('/openapi.json', (_request, response) => response.json(openApiSpec))
 
   app.use((_request, response) => {

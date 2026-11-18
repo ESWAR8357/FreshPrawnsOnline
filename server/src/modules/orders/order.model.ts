@@ -26,6 +26,15 @@ const deliveryAssignmentSchema = new Schema({
   details: { type: String, trim: true, maxlength: 500 },
 }, { _id: false })
 
+const orderEventSchema = new Schema({
+  type: { type: String, enum: ['order_status_changed', 'delivery_assigned', 'delivery_status_changed'], required: true },
+  actorId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+  actorRole: { type: String, enum: ['customer', 'admin', 'system'], required: true },
+  from: { type: String, trim: true, maxlength: 40 },
+  to: { type: String, trim: true, maxlength: 40 },
+  createdAt: { type: Date, required: true, default: Date.now },
+}, { _id: true, versionKey: false })
+
 const orderSchema = new Schema({
   customerUserId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   customerName: { type: String, required: true, trim: true, maxlength: 120 },
@@ -55,6 +64,7 @@ const orderSchema = new Schema({
   },
   deliveryMethod: { type: String, enum: ['shop', 'third_party'], required: true },
   deliveryAssignment: { type: deliveryAssignmentSchema, default: undefined },
+  events: { type: [orderEventSchema], default: [] },
   items: { type: [orderItemSchema], required: true, validate: (items: unknown[]) => items.length > 0 },
   subtotalPaise: { type: Number, required: true, min: 0, validate: Number.isSafeInteger },
   deliveryFeePaise: { type: Number, required: true, min: 0, validate: Number.isSafeInteger },

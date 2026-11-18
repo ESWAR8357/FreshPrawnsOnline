@@ -24,6 +24,19 @@ const stockSchema = new Schema({
     }],
     default: [],
   },
+  movements: {
+    type: [{
+      operationId: { type: String, required: true },
+      actorId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+      orderId: { type: Schema.Types.ObjectId, ref: 'Order', default: null },
+      deltaGrams: { type: Number, required: true, validate: Number.isSafeInteger },
+      reservedDeltaGrams: { type: Number, required: true, validate: Number.isSafeInteger, default: 0 },
+      reason: { type: String, required: true, enum: ['received', 'spoilage', 'correction', 'other', 'order_reserved', 'order_released', 'order_fulfilled'] },
+      reference: { type: String, trim: true, maxlength: 160 },
+      createdAt: { type: Date, required: true },
+    }],
+    default: [],
+  },
 }, { timestamps: true, versionKey: false })
 
 stockSchema.index({ 'reservations.orderId': 1 })

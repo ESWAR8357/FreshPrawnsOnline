@@ -82,7 +82,7 @@ The foundation now lives in `server/`, independently of the React frontend. It u
 
 Focused API tests run with Supertest and an injected MongoDB health state without connecting to a database. The live service requires a MongoDB connection at startup and initializes the declared indexes after connecting. The local Compose MongoDB is standalone and does not provide multi-document transactions. See `README.md` for setup and the transaction/fallback strategy.
 
-The backend foundation is followed by the current account/order implementation described below. Payments, maps, notifications, provider delivery, and admin product/pricing/stock writes remain out of scope. CI setup and live MongoDB integration tests remain follow-up work.
+The backend foundation is followed by the account/order implementation and Phase 6 admin management described below. Payments, maps, notifications, and provider delivery remain out of scope. CI setup and live MongoDB integration tests remain follow-up work.
 
 ### Later reviewed feature phases
 
@@ -93,7 +93,7 @@ Implemented vertical slices and remaining work:
 3. **Implemented:** Customer checkout/order creation with server-calculated prices and fees, idempotency, conditional per-product stock reservation, order ownership reads, and admin status transitions.
 4. **Implemented:** Frontend account, API-backed checkout, order tracking, and protected admin order/status views. Cart remains local to the browser.
 5. **Implemented: Manual delivery assignment (current feature phase):** Admins may assign a shop delivery person or record a third-party method and reference manually. Delivery status transitions are validated; customer order responses expose only the assigned contact or service/reference needed for tracking. No provider is contacted.
-6. **Remaining:** Admin product, daily price, and stock writes; stock movement APIs; order status event history; richer customer account/order history.
+6. **Implemented: Admin catalogue, pricing, stock, and order history:** Admin-only product create/read/update/deactivation, chronological Hyderabad-day price history, idempotent on-hand adjustments and stock movements, and owner/admin-scoped order event history. Product/order snapshots remain immutable. Stock changes and movement entries share a Stock document; order events share the Order document.
 7. **Later approved work:** Independent third-party delivery adapter and provider integrations after explicit owner approval.
 8. **Later approved work:** Provider-independent payments, notifications, maps/location, and image storage; sandbox first and live operation only after approval.
 9. **Remaining frontend stack adoption:** TypeScript, TanStack Query, React Hook Form/Zod, and React Testing Library; preserve current responsive UI and accessible loading, error, empty, and success states.
@@ -106,14 +106,14 @@ Use Mongoose schemas with explicit validation and collection-level indexes. Stor
 - **refreshSessions:** store only a hash of each opaque refresh token, user, expiry, rotation/revocation state, and device/session metadata needed for security. Rotate on use, detect reuse, and revoke a token family on replay.
 - **products:** stable slug, name/description, size/category, active state, preparation-option references/settings, image reference, and timestamps.
 - **dailyPrices:** product, integer paise per kg, effective interval, actor, and audit timestamps. Preserve history; do not overwrite a price used by an existing order.
-- **stock:** per-product on-hand/reserved integer grams and a per-order reservation ledger. Pair balance updates with append-only **stockMovements** (signed delta, reason, actor, reference, timestamp).
+- **stock:** per-product on-hand/reserved integer grams, a per-order reservation ledger, and an embedded append-only movement ledger (on-hand and reserved deltas, reason, actor/order reference, timestamp, idempotency operation ID). Update balances, reservation entries, and their movement atomically in the same Stock document.
 - **carts (optional):** customer or short-lived guest cart and item selections. Treat it as a convenience only; recalculate price and validate stock when quoting and placing an order.
 - **orders:** customer/contact and address snapshot, immutable item/preparation/weight/quantity/price/fee snapshots, integer subtotal/delivery/total paise, status, durable stock-operation state, timestamps, and customer-scoped idempotency metadata.
-- **orderEvents:** append-only status and administrative event history with actor and timestamp.
+- **orders.events (embedded):** append-only order/delivery status and assignment history with actor role, state transition, and timestamp. Embedding the bounded (500-event) ledger makes each event atomic with its order mutation and allows owner-scoped history reads.
 - **orders.deliveryAssignment (embedded):** Phase 5 assignment data stays in the order document so assignment/status changes are atomic for that order. It records method (`shop` or `third_party`), progress status, shop person contact or manually entered third-party label/reference/admin-only details. Do not store provider credentials here; a separately indexed collection can be considered if a later audit/history requirement justifies it.
 - **idempotencyRecords / outbox (as needed):** unique idempotency key and request fingerprint; durable intent for reliable internal follow-up work when a multi-document transaction cannot be used.
 
-Indexes to plan and test include: normalized user login identifier (unique), product slug (unique), product active/category lookup, daily price by product and effective time, stock by unique product ID, order by status/created time and customer/date, unique idempotency key, unique tracking-token hash, and event/assignment history by order and time. Avoid storing unnecessary personal data in indexes or public API responses.
+Indexes to plan and test include: normalized user login identifier (unique), product slug (unique), product active/category lookup, unique daily price by product/effective date, stock by unique product ID and reservation order ID, order by status/created time and customer/date, and unique order idempotency key. Stock/order event ledgers are embedded in their owning documents. Avoid storing unnecessary personal data in indexes or public API responses.
 
 ## MongoDB consistency and transactions
 
@@ -133,7 +133,7 @@ For multi-product checkout, transient partial reservations are possible without 
 
 ## REST API outline
 
-These are planned contracts; the public product read endpoints listed below are now implemented.
+Public product reads and Phase 6 admin/order-history endpoints below are implemented.
 
 ### Public/customer
 
@@ -143,17 +143,19 @@ These are planned contracts; the public product read endpoints listed below are 
 - `GET/POST/PATCH/DELETE /api/v1/cart` — only if a persistent server-side cart is approved.
 - `POST /api/v1/orders` — implemented; validate current server prices/options/stock, apply idempotency, and reserve stock. No quote API is currently provided.
 - `GET /api/v1/orders`, `GET /api/v1/orders/:id` — customer-scoped; admins can read recent orders.
+- `GET /api/v1/orders/:id/events` — order owner or admin; customer response omits actor IDs and internal notes.
 
 ### Admin
 
 - Admins use the same `/api/v1/auth/*` endpoints as customers; role authorization is enforced from current MongoDB account state on every protected request.
-- `POST/GET/PATCH /api/v1/admin/products` and `/api/v1/admin/products/:productId` (planned; require admin authentication).
-- `POST /api/v1/admin/products/:productId/prices` — append a new effective-dated price (planned; require admin authentication).
-- `GET /api/v1/admin/stock`, `POST /api/v1/admin/stock/:productId/adjustments` (planned; require admin authentication).
+- `GET/POST /api/v1/admin/products`, `GET/PATCH /api/v1/admin/products/:productId` — product management and deactivation; every route requires current admin authorization. Admin list and stock reads are paginated with bounded offset/limit.
+- `POST/GET /api/v1/admin/products/:productId/prices` — append/read chronological price history; effective date is midnight `Asia/Kolkata`, stored in integer paise per kg.
+- `GET /api/v1/admin/stock`, `POST /api/v1/admin/stock/:productId/adjustments`, `GET /api/v1/admin/stock/:productId/movements` — on-hand adjustments never change reservations; signed integer grams, reserved-stock bounds, and actor-scoped idempotency are enforced. The ledger contains adjustment, order reservation/release, and fulfillment movements.
 - `GET /api/v1/orders` — returns recent orders to admins.
 - `PATCH /api/v1/orders/:id/status` — implemented with server-side role checks and explicit transition rules.
 - `PATCH /api/v1/orders/:id/delivery` — implemented, admin-only; saves shop person contact or manually entered third-party label/reference/details. No external provider is called.
 - `PATCH /api/v1/orders/:id/delivery/status` — implemented, admin-only; validates manual delivery progress transitions.
+- Order status and delivery assignment/progress mutations append bounded embedded events atomically; the event history endpoint is readable only by the order owner or an admin.
 - `PATCH /api/v1/orders/:id/status` — an order can move to `out_for_delivery` only after a manual delivery assignment; delivery completion/cancellation stays coupled to the existing stock-consumption/release behavior.
 
 Validate params, query, headers, and body with Zod at the API boundary. Document stable request/response and error shapes in OpenAPI. Never accept browser-supplied role, trusted prices/totals, payment status, delivery-provider status, or available stock.
@@ -196,7 +198,7 @@ Resolve these in planning before the relevant code is implemented:
 
 1. Exact Hyderabad delivery areas/pin codes, excluded areas, delivery hours, minimum order, and fee rules by method.
 2. Allowed weight increments and quantity caps; whether cleaning has a fixed fee, a per-weight fee, a yield effect, or product-specific rules.
-3. Daily-price timezone, publish/cutoff time, expiry behavior, and whether an accepted quote locks a price for a defined duration.
+3. Daily-price publish/cutoff time, expiry behavior, and whether an accepted quote locks a price for a defined duration. Phase 6 interprets an entered effective date at midnight `Asia/Kolkata` and requires chronological additions.
 4. Stock measurement, waste/yield accounting, reservation expiry, cancellation/release rules, and production alerting for interrupted inventory recovery.
 5. Guest checkout remains disabled; customer accounts are implemented. Confirm required customer fields and data retention/deletion policy.
 6. Order cancellation, substitution, out-of-stock, refund, complaint, and order-status policies.
