@@ -10,19 +10,20 @@
   -moz-osx-font-smoothing: grayscale;
   font-optical-sizing: auto;
   font-weight: 400;
-  --ink: #20302a;
-  --muted: #78827b;
-  --green: #2f7052;
-  --green-dark: #234f3d;
-  --lime: #d3ef86;
-  --cream: #f7f8f4;
-  --line: #e6e9e2;
+  --ink: #17343b;
+  --muted: #62777a;
+  --green: #087c78;
+  --green-dark: #075d60;
+  --lime: #e5f4d5;
+  --cream: #f7f8f5;
+  --line: #e0e8e5;
   --serif: "Fraunces", Georgia, serif;
+  --coral: #e8785d;
 }
 
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
-body { margin: 0; min-width: 320px; min-height: 100vh; }
+body { margin: 0; min-width: 320px; min-height: 100vh; background: #fbfcfa; color: var(--ink); font-size: 15px; line-height: 1.55; }
 button, input, textarea, select { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
 button { cursor: pointer; }

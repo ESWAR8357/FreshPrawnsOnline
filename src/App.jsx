@@ -93,9 +93,9 @@ async function apiRequest(path, { token, ...options } = {}) {
 
 function toAdminOrder(order) {
   const statusLabels = {
-    pending: 'New',
+    pending: 'Pending',
     confirmed: 'Confirmed',
-    preparing: 'Preparing',
+    preparing: 'Processing',
     out_for_delivery: 'Out for delivery',
     delivered: 'Delivered',
     cancelled: 'Cancelled',
@@ -307,9 +307,9 @@ function App() {
             <Route path="/shop" element={<ShopPage products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={retryCatalogue} onAdd={addToCart} />} />
             <Route path="/product/:id" element={<ProductPage products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={retryCatalogue} onAdd={addToCart} />} />
             <Route path="/cart" element={<CartPage cart={cart} products={products} onChange={updateQuantity} />} />
-            <Route path="/account" element={<AccountPage currentUser={currentUser} authStatus={authStatus} authToken={authToken} onAuthenticated={onAuthenticated} onSignOut={signOut} />} />
+            <Route path="/account" element={<AccountPage currentUser={currentUser} authStatus={authStatus} onAuthenticated={onAuthenticated} onSignOut={signOut} />} />
             <Route path="/checkout" element={<CheckoutPage cart={cart} products={products} currentUser={currentUser} authToken={authToken} onPlaceOrder={(order) => { setActiveOrder(order); clearCart() }} />} />
-            <Route path="/track" element={<TrackPage order={activeOrder} authToken={authToken} />} />
+            <Route path="/track" element={<TrackPage order={activeOrder} authToken={authToken} currentUser={currentUser} />} />
             <Route path="/admin/*" element={<AdminPage products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={retryCatalogue} currentUser={currentUser} authToken={authToken} />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
@@ -342,7 +342,7 @@ function Header({ cartCount, menuOpen, setMenuOpen, currentUser }) {
           <a href="/#contact" onClick={closeMenu}>Contact</a>
         </nav>
         <div className="header-actions">
-          <Link className="track-link" to="/track"><PackageCheck size={17} /> Track order</Link>
+          <Link className="track-link" to="/track"><PackageCheck size={17} /> {currentUser?.role === 'customer' ? 'Track orders' : 'Track order'}</Link>
           <Link className="track-link account-nav" to="/account">{currentUser ? 'My account' : 'Sign in'}</Link>
           <Link to="/cart" className="cart-button" aria-label={`Cart, ${cartCount} items`}><ShoppingBag size={18} /><span>Cart</span><b>{cartCount}</b></Link>
         </div>
@@ -485,7 +485,7 @@ function CartPage({ cart, products, onChange }) {
       <Link className="continue-shopping" to="/shop"><ArrowLeft size={16} /> Keep browsing</Link></section><aside className="order-summary"><h2>Order summary</h2><div className="summary-row"><span>Subtotal</span><b>{money(subtotal)}</b></div><div className="summary-row"><span>Delivery</span><span>Calculated next</span></div><div className="summary-total"><span>Total</span><strong>{money(subtotal)}</strong></div><p className="summary-disclaimer">Delivery fee and address are confirmed at checkout.</p><Link to="/checkout" className="button button-dark full-button">Continue to checkout <ArrowRight size={17} /></Link><div className="secure-note"><BadgeCheck size={15} /> No payment is collected in this demo</div></aside></div>}</main>
 }
 
-function AccountPage({ currentUser, authStatus, authToken, onAuthenticated, onSignOut }) {
+function AccountPage({ currentUser, authStatus, onAuthenticated, onSignOut }) {
   const navigate = useNavigate()
   const location = useLocation()
   const googleButtonRef = useRef(null)
@@ -566,7 +566,7 @@ function AccountPage({ currentUser, authStatus, authToken, onAuthenticated, onSi
   }
 
   if (currentUser) {
-    return <main className="page-main account-page"><div className={`account-card ${currentUser.role === 'customer' ? 'account-dashboard' : ''}`}><div className="eyebrow">YOUR FRESH PRAWNS ACCOUNT</div><h1>You're signed in</h1><p>{currentUser.email}</p><p className="account-role">Account type: {currentUser.role}</p><div className="account-actions"><Link className="button button-dark" to={currentUser.role === 'admin' ? '/admin' : '/shop'}>{currentUser.role === 'admin' ? 'Open admin orders' : 'Continue shopping'} <ArrowRight size={16} /></Link><button className="button button-outline" type="button" onClick={onSignOut}>Sign out</button></div>{currentUser.role === 'customer' && <CustomerOrderHistory authToken={authToken} />}</div></main>
+    return <main className="page-main account-page"><div className={`account-card ${currentUser.role === 'customer' ? 'account-dashboard' : ''}`}><div className="eyebrow">YOUR FRESH PRAWNS ACCOUNT</div><h1>Welcome back</h1><p>{currentUser.email}</p><p className="account-role">{currentUser.role === 'admin' ? 'Administrator account' : 'Customer account'}</p><div className="account-actions"><Link className="button button-dark" to={currentUser.role === 'admin' ? '/admin' : '/shop'}>{currentUser.role === 'admin' ? 'Open admin dashboard' : 'Continue shopping'} <ArrowRight size={16} /></Link>{currentUser.role === 'customer' && <Link className="button button-outline" to="/track"><PackageCheck size={16} /> Track orders</Link>}<button className="button button-outline" type="button" onClick={onSignOut}>Sign out</button></div></div></main>
   }
 
   return <main className="page-main account-page"><div className="account-card"><div className="eyebrow">A SEAT AT OUR TABLE</div><h1>{mode === 'register' ? 'Create your account' : 'Welcome back'}</h1><p>{mode === 'register' ? 'Sign up to place and view your Hyderabad orders.' : 'Sign in to continue to checkout and your orders.'}</p><div className="account-mode" role="tablist" aria-label="Account action"><button type="button" role="tab" aria-selected={mode === 'login'} className={mode === 'login' ? 'active' : ''} onClick={() => { setMode('login'); setError('') }}>Sign in</button><button type="button" role="tab" aria-selected={mode === 'register'} className={mode === 'register' ? 'active' : ''} onClick={() => { setMode('register'); setError('') }}>Create account</button></div>{googleClientId ? <><div className="google-signin" aria-label={mode === 'register' ? 'Sign up with Google' : 'Sign in with Google'}><div ref={googleButtonRef} /></div><div className="account-divider"><span>or use email</span></div></> : <p className="account-note">Google sign-in is not configured yet. You can still use email and password.</p>}<form className="account-form" onSubmit={submit}><label>Email address<input name="email" type="email" autoComplete="email" maxLength="254" required /></label><label>Password<input name="password" type="password" autoComplete={mode === 'register' ? 'new-password' : 'current-password'} minLength="12" maxLength="128" required /><small>Use at least 12 characters.</small></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="button button-dark full-button" type="submit" disabled={busy}>{busy ? 'Please wait…' : mode === 'register' ? 'Create customer account' : 'Sign in'} <ArrowRight size={16} /></button></form><p className="account-note">Google sign-in creates a customer account or signs into the account with the same verified Google email. Admin access remains limited to provisioned administrator accounts.</p></div></main>
@@ -595,7 +595,8 @@ function CustomerOrderHistory({ authToken }) {
           return [...data, ...previous.filter((order) => !currentPageIds.has(order.id))]
         })
         setNextCursor(pagination?.nextCursor || null)
-        setStatus(data.length ? 'ready' : 'empty')
+        setStatus((previousStatus) => data.length || previousStatus === 'ready' ? 'ready' : 'empty')
+        setError('')
       } catch (requestError) {
         if (!active) return
         setError(requestError.message || 'Could not load your orders.')
@@ -604,7 +605,7 @@ function CustomerOrderHistory({ authToken }) {
         inFlight = false
       }
     }
-    const timer = window.setInterval(refreshOrders, 15000)
+    const timer = window.setInterval(refreshOrders, 5000)
     const onVisibilityChange = () => { if (document.visibilityState === 'visible') refreshOrders() }
     document.addEventListener('visibilitychange', onVisibilityChange)
     refreshOrders()
@@ -633,9 +634,9 @@ function CustomerOrderHistory({ authToken }) {
     }
   }
 
-  const labels = { pending: 'Received', confirmed: 'Confirmed', preparing: 'Preparing', out_for_delivery: 'Out for delivery', delivered: 'Delivered', cancelled: 'Cancelled' }
+  const labels = { pending: 'Pending', confirmed: 'Confirmed', preparing: 'Processing', out_for_delivery: 'Out for delivery', delivered: 'Delivered', cancelled: 'Cancelled' }
   return <section className="customer-orders" aria-labelledby="customer-orders-heading">
-    <div className="customer-orders-heading"><div><h2 id="customer-orders-heading">My orders</h2><p>Your orders are saved to your account.</p></div><button type="button" className="text-button" onClick={() => { setError(''); setStatus('loading'); setRetry((count) => count + 1) }} disabled={status === 'loading'}>Refresh</button></div>
+    <div className="customer-orders-heading"><div><h2 id="customer-orders-heading">Your orders</h2><p>Orders placed with this account, updated from the shop.</p></div><button type="button" className="text-button" onClick={() => { setError(''); setStatus('loading'); setRetry((count) => count + 1) }} disabled={status === 'loading'}>Refresh</button></div>
     {status === 'loading' && <p role="status">Loading your orders…</p>}
     {status === 'error' && <div className="form-error" role="alert">{error}<button type="button" className="text-button" onClick={() => { setError(''); setStatus('loading'); setRetry((count) => count + 1) }}> Try again</button></div>}
     {status === 'empty' && <div className="customer-orders-empty"><PackageCheck size={22} /><p>Your orders will appear here after checkout.</p><Link to="/shop" className="text-link">Browse prawns <ArrowRight size={14} /></Link></div>}
@@ -707,7 +708,7 @@ function CheckoutPage({ cart, products, currentUser, authToken, onPlaceOrder }) 
     <aside className="order-summary checkout-summary"><h2>Your order</h2>{lines.map((item) => <div className="summary-product" key={item.key}><img src={item.product.image} alt="" /><span><b>{item.product.name}</b><small>{item.cleaned ? 'Cleaned' : 'Uncleaned'} · {item.weight >= 1000 ? '1 kg' : `${item.weight} g`} × {item.quantity}</small></span><strong>{money(getLinePrice(item, item.product))}</strong></div>)}<div className="summary-row"><span>Subtotal estimate</span><b>{money(subtotal)}</b></div><div className="summary-row"><span>Delivery estimate</span><b>{money(delivery)}</b></div><div className="summary-total"><span>Total estimate</span><strong>{money(total)}</strong></div><div className="checkout-summary-note"><BadgeCheck size={15} /> Final total is calculated by the server</div></aside></div></main>
 }
 
-function TrackPage({ order, authToken }) {
+function TrackPage({ order, authToken, currentUser }) {
   const [searchParams] = useSearchParams()
   const [lookup, setLookup] = useState('')
   const [hasSearched, setHasSearched] = useState(false)
@@ -745,7 +746,7 @@ function TrackPage({ order, authToken }) {
         inFlight = false
       }
     }
-    const timer = window.setInterval(refreshOrder, 15000)
+    const timer = window.setInterval(refreshOrder, 5000)
     const onVisibilityChange = () => { if (document.visibilityState === 'visible') refreshOrder() }
     document.addEventListener('visibilitychange', onVisibilityChange)
     refreshOrder()
@@ -785,13 +786,14 @@ function TrackPage({ order, authToken }) {
       setLookupBusy(false)
     }
   }
-  const steps = ['Confirmed', 'Preparing', 'Out for delivery', 'Delivered']
+  const steps = ['Confirmed', 'Processing', 'Out for delivery', 'Delivered']
   const statusSteps = { pending: 0, confirmed: 0, preparing: 1, out_for_delivery: 2, delivered: 3 }
   const stage = statusSteps[shownOrder?.status] ?? statusSteps[String(shownOrder?.status || '').toLowerCase()] ?? -1
-  return <main className="page-main tracking-page"><div className="eyebrow">A LITTLE PEACE OF MIND</div><h1 className="page-heading">Track your order</h1><p className="tracking-intro">We'll keep you in the loop, from our counter to your door.</p>
-    <form className="tracking-search" onSubmit={searchOrders}><label htmlFor="order-lookup">Order number</label><div><input id="order-lookup" value={lookup} onChange={(event) => setLookup(event.target.value)} placeholder="e.g. FP-123456" /><button className="button button-dark" type="submit" disabled={lookupBusy}>{lookupBusy ? 'Searching…' : 'Find order'} <ArrowRight size={16} /></button></div><small>Search uses orders linked to your signed-in account.</small></form>
-    {lookupError && <p className="form-error" role="alert">{lookupError}</p>}
-    {shownOrder ? <section className="tracking-card"><div className="tracking-card-head"><div><span className="status-pill"><i /> {shownOrder.status === 'pending' ? 'Order received' : shownOrder.status}</span><h2>Order {shownOrder.id}</h2><p>Placed {shownOrder.createdAt}</p></div><strong>{money(shownOrder.total)}</strong></div><div className="tracking-steps">{steps.map((step, index) => <div className={`tracking-step ${index <= stage ? 'completed' : ''}`} key={step}><span className="tracking-step-icon">{index <= stage ? <Check size={15} /> : index === 1 ? <Fish size={15} /> : index === 2 ? <Truck size={15} /> : <PackageCheck size={15} />}</span><b>{step}</b>{index < steps.length - 1 && <span className="tracking-step-line" />}</div>)}</div><div className="tracking-order-meta"><div><MapPin size={16} /><span><b>Delivering to</b><small>{shownOrder.address || 'Hyderabad'}</small></span></div><div><Truck size={16} /><span><b>Delivery method</b><small>{shownOrder.deliveryMethod === 'partner' ? 'Third-party service' : 'Our delivery person'}</small></span></div><div><PackageCheck size={16} /><span><b>Delivery status</b><small>{deliveryStatusLabel(shownOrder.delivery?.status)}</small></span></div><div><Banknote size={16} /><span><b>Payment</b><small>{shownOrder.paymentMethodLabel} · {shownOrder.paymentStatusLabel}</small></span></div>{shownOrder.delivery?.method === 'shop' && shownOrder.delivery.personName && <div><Headset size={16} /><span><b>Delivery contact</b><small>{shownOrder.delivery.personName}{shownOrder.delivery.personPhone ? ` · ${shownOrder.delivery.personPhone}` : ''}</small></span></div>}{shownOrder.delivery?.method === 'third_party' && (shownOrder.delivery.serviceName || shownOrder.delivery.reference) && <div><PackageCheck size={16} /><span><b>Delivery reference</b><small>{[shownOrder.delivery.serviceName, shownOrder.delivery.reference].filter(Boolean).join(' · ')}</small></span></div>}</div><section className="order-event-history" aria-labelledby="customer-order-history"><h3 id="customer-order-history">Order updates</h3>{eventsError && <p className="form-error" role="alert">{eventsError}</p>}{orderEvents.length ? <ol>{orderEvents.map((item) => <li key={item.id}><b>{item.type.replaceAll('_', ' ')}</b><small>{item.from && item.to ? `${item.from.replaceAll('_', ' ')} → ${item.to.replaceAll('_', ' ')}` : item.to?.replaceAll('_', ' ')}</small><time dateTime={item.createdAt}>{new Date(item.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</time></li>)}</ol> : !eventsError && <p>No updates recorded yet.</p>}</section><p className="tracking-demo">Order status and history refresh automatically about every 15 seconds while this page is open.</p></section> : <div className="tracking-empty"><div className="tracking-empty-icon"><PackageCheck size={29} /></div><h2>No order to show just yet</h2><p>Place an order while signed in, or search for an order linked to your account.</p><Link to="/shop" className="text-link">Browse fresh prawns <ArrowRight size={16} /></Link></div>}
+  return <main className="page-main tracking-page"><div className="eyebrow">A LITTLE PEACE OF MIND</div><h1 className="page-heading">{currentUser?.role === 'customer' ? 'Track your orders' : 'Track your order'}</h1><p className="tracking-intro">We'll keep you in the loop, from our counter to your door.</p>
+    {currentUser?.role === 'customer' && <CustomerOrderHistory key={currentUser.id || currentUser.email} authToken={authToken} />}
+    {currentUser?.role !== 'customer' && <><form className="tracking-search" onSubmit={searchOrders}><label htmlFor="order-lookup">Order number</label><div><input id="order-lookup" value={lookup} onChange={(event) => setLookup(event.target.value)} placeholder="e.g. FP-123456" /><button className="button button-dark" type="submit" disabled={lookupBusy}>{lookupBusy ? 'Searching…' : 'Find order'} <ArrowRight size={16} /></button></div><small>Sign in with the customer account that placed the order.</small></form>{lookupError && <p className="form-error" role="alert">{lookupError}</p>}</>}
+    {!currentUser?.role && !shownOrder && <div className="tracking-empty"><div className="tracking-empty-icon"><PackageCheck size={29} /></div><h2>Sign in to track your orders</h2><p>Your order list is linked securely to your customer account.</p><Link to="/account" className="button button-dark">Sign in or create an account <ArrowRight size={16} /></Link></div>}
+    {shownOrder && <section className="tracking-card"><div className="tracking-card-head"><div><span className="status-pill"><i /> {shownOrder.status === 'pending' ? 'Pending' : shownOrder.status === 'preparing' ? 'Processing' : shownOrder.status}</span><h2>Order {shownOrder.id}</h2><p>Placed {shownOrder.createdAt}</p></div><strong>{money(shownOrder.total)}</strong></div><div className="tracking-steps">{steps.map((step, index) => <div className={`tracking-step ${index <= stage ? 'completed' : ''}`} key={step}><span className="tracking-step-icon">{index <= stage ? <Check size={15} /> : index === 1 ? <Fish size={15} /> : index === 2 ? <Truck size={15} /> : <PackageCheck size={15} />}</span><b>{step}</b>{index < steps.length - 1 && <span className="tracking-step-line" />}</div>)}</div><div className="tracking-order-meta"><div><MapPin size={16} /><span><b>Delivering to</b><small>{shownOrder.address || 'Hyderabad'}</small></span></div><div><Truck size={16} /><span><b>Delivery method</b><small>{shownOrder.deliveryMethod === 'partner' ? 'Third-party service' : 'Our delivery person'}</small></span></div><div><PackageCheck size={16} /><span><b>Delivery status</b><small>{deliveryStatusLabel(shownOrder.delivery?.status)}</small></span></div><div><Banknote size={16} /><span><b>Payment</b><small>{shownOrder.paymentMethodLabel} · {shownOrder.paymentStatusLabel}</small></span></div>{shownOrder.delivery?.method === 'shop' && shownOrder.delivery.personName && <div><Headset size={16} /><span><b>Delivery contact</b><small>{shownOrder.delivery.personName}{shownOrder.delivery.personPhone ? ` · ${shownOrder.delivery.personPhone}` : ''}</small></span></div>}{shownOrder.delivery?.method === 'third_party' && (shownOrder.delivery.serviceName || shownOrder.delivery.reference) && <div><PackageCheck size={16} /><span><b>Delivery reference</b><small>{[shownOrder.delivery.serviceName, shownOrder.delivery.reference].filter(Boolean).join(' · ')}</small></span></div>}</div><section className="order-event-history" aria-labelledby="customer-order-events"><h3 id="customer-order-events">Order updates</h3>{eventsError && <p className="form-error" role="alert">{eventsError}</p>}{orderEvents.length ? <ol>{orderEvents.map((item) => <li key={item.id}><b>{item.type.replaceAll('_', ' ')}</b><small>{item.from && item.to ? `${item.from.replaceAll('_', ' ')} → ${item.to.replaceAll('_', ' ')}` : item.to?.replaceAll('_', ' ')}</small><time dateTime={item.createdAt}>{new Date(item.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</time></li>)}</ol> : !eventsError && <p>No updates recorded yet.</p>}</section><p className="tracking-demo">Order status refreshes automatically while this page is open.</p></section>}
     <div className="tracking-support"><Headset size={18} /><span>Need a hand? <a href="tel:+919346338357">Call our shop at +91 93463 38357</a></span></div>
   </main>
 }
@@ -801,7 +803,7 @@ function SupportSection() {
 }
 
 function Footer() {
-  return <footer className="site-footer"><div className="footer-main"><Link to="/" className="brand footer-brand"><span className="brand-mark"><Fish size={21} /></span><span className="brand-name">fresh<span>prawns</span><small>ONLINE · HYDERABAD</small></span></Link><p>Good prawns, good food, good mood.<br />A neighbourhood shop, with a little more convenience.</p><div className="footer-links"><Link to="/shop">Shop</Link><Link to="/track">Track order</Link><Link to="/admin">Admin demo</Link></div></div><div className="footer-bottom"><span>© 2026 Fresh Prawns Online · Sample storefront for Phase 1</span><span>Made with care in Hyderabad <span className="footer-heart">♥</span></span></div></footer>
+  return <footer className="site-footer"><div className="footer-main"><Link to="/" className="brand footer-brand"><span className="brand-mark"><Fish size={21} /></span><span className="brand-name">fresh<span>prawns</span><small>ONLINE · HYDERABAD</small></span></Link><p>Good prawns, good food, good mood.<br />A neighbourhood shop, with a little more convenience.</p><div className="footer-links"><Link to="/shop">Shop</Link><Link to="/track">Track orders</Link><Link to="/admin">Admin</Link></div></div><div className="footer-bottom"><span>© 2026 Fresh Prawns Online · Sample storefront for Phase 1</span><span>Made with care in Hyderabad <span className="footer-heart">♥</span></span></div></footer>
 }
 
 function AdminPage({ products, catalogueStatus, catalogueError, onRetry, currentUser, authToken }) {
@@ -836,7 +838,7 @@ function AdminPage({ products, catalogueStatus, catalogueError, onRetry, current
         inFlight = false
       }
     }
-    const timer = window.setInterval(refreshOrders, 15000)
+    const timer = window.setInterval(refreshOrders, 5000)
     const onVisibilityChange = () => { if (document.visibilityState === 'visible') refreshOrders() }
     document.addEventListener('visibilitychange', onVisibilityChange)
     refreshOrders()
@@ -854,9 +856,9 @@ function AdminPage({ products, catalogueStatus, catalogueError, onRetry, current
     let body
     if (patch.status) {
       const statusValues = {
-        New: 'pending',
+        Pending: 'pending',
         Confirmed: 'confirmed',
-        Preparing: 'preparing',
+        Processing: 'preparing',
         'Out for delivery': 'out_for_delivery',
         Delivered: 'delivered',
         Cancelled: 'cancelled',
@@ -1319,7 +1321,7 @@ function AdminOrders({ orders, selectedOrder, setSelectedOrder, onUpdateOrder, s
         </section>
         <div className="order-detail-total"><span>Order total</span><b>{money(current.total)}</b></div>
         <section className="admin-delivery-assignment" aria-labelledby="order-payment-heading"><div className="admin-delivery-heading"><div><h3 id="order-payment-heading">Payment</h3><p>{current.paymentMethodLabel} · {current.paymentStatusLabel}</p></div>{current.paymentStatus === 'collected' && current.paymentCollectedAt && <span>{new Date(current.paymentCollectedAt).toLocaleDateString('en-IN')}</span>}</div>{current.rawStatus === 'delivered' && current.paymentStatus === 'pending_collection' && <button type="button" className="button button-outline" disabled={recordingPayment} onClick={recordPaymentCollection}>{recordingPayment ? 'Recording…' : 'Record payment collected'}</button>}</section>
-        <label className="status-control">Order status<select value={current.status} onChange={(event) => updateOrder(current.id, { status: event.target.value })}><option>New</option><option>Confirmed</option><option>Preparing</option><option>Out for delivery</option><option>Delivered</option><option>Cancelled</option></select></label>
+        <label className="status-control">Order status<select value={current.status} onChange={(event) => updateOrder(current.id, { status: event.target.value })}><option>Pending</option><option>Confirmed</option><option>Processing</option><option>Out for delivery</option><option>Delivered</option><option>Cancelled</option></select></label>
         <p className="admin-demo-hint">Manual assignment only. Third-party dispatch, live tracking, and notifications are not connected. Assignment changes do not recalculate the order’s original delivery fee.</p>
       </section>}
     </div>
