@@ -1,12 +1,12 @@
 # Fresh Prawns Online
 
-Fresh Prawns Online is a customer storefront and owner dashboard for a single-owner prawn shop serving Hyderabad. Frontend and backend are independently runnable services in this repository. Product, price, stock, account, checkout, order-status, and pay-on-delivery collection records use REST APIs. No online payment, maps, or delivery dispatch provider is connected.
+Fresh Prawns Online is a customer storefront and owner dashboard for a single-owner prawn shop serving Hyderabad. Frontend and backend are independently runnable services in this repository. Product, price, stock, account, checkout, order-status, and pay-on-delivery collection records use REST APIs. Google sign-in is supported after an OAuth Web client ID is configured. No online payment, maps, or delivery dispatch provider is connected.
 
 ## Current project stack
 
 - **Frontend:** React, JavaScript/JSX today, Vite, Tailwind CSS, React Router. TypeScript, TanStack Query, React Hook Form/Zod, and React Testing Library are target frontend choices to adopt in later reviewed work; they are not all implemented yet.
 - **Backend:** Node.js/TypeScript, Express, MongoDB/Mongoose, Zod configuration and request validation, Argon2id password hashing, short-lived JWT access tokens, rotating opaque refresh tokens, Pino request logging, Helmet, CORS allowlist, and rate limits.
-- **Backend APIs:** process and MongoDB readiness at `GET /health`; OpenAPI JSON at `GET /openapi.json`; public catalogue at `GET /api/v1/products` and `GET /api/v1/products/:slug`; customer auth at `/api/v1/auth`; customer/admin order APIs at `/api/v1/orders`; admin product, pricing, and stock APIs at `/api/v1/admin`.
+- **Backend APIs:** process and MongoDB readiness at `GET /health`; OpenAPI JSON at `GET /openapi.json`; public catalogue at `GET /api/v1/products` and `GET /api/v1/products/:slug`; customer auth at `/api/v1/auth` (email/password and optional verified Google identity); customer/admin order APIs at `/api/v1/orders`; admin product, pricing, and stock APIs at `/api/v1/admin`.
 - **Database:** MongoDB is the only application database. Local development uses Docker Compose. Frontend and backend are independently started and built.
 
 ## Phase 1 frontend
@@ -14,6 +14,7 @@ Fresh Prawns Online is a customer storefront and owner dashboard for a single-ow
 The Phase 1 storefront presentation is preserved. Product, current price, preparation options, and availability are API-backed; the following remain mock/local demonstrations:
 
 - Responsive homepage, catalogue, product details, cleaned/uncleaned choice, weight and quantity selection, cart, account form, checkout UI, address/location placeholder, order tracking, and support/contact section.
+- The customer account page loads saved orders from the customer-only API after sign-in, including order status, item details, pay-on-delivery state, and order tracking links.
 - `/checkout` requires a customer account and submits selection/address/delivery method only. The server reads current product options and daily prices, reserves available stock, and calculates the final total. Cart contents remain browser-local until order submission.
 - Admin dashboard at `/admin` requires an API-verified admin role. Orders, status updates, manual delivery assignment, product management, daily pricing, stock adjustments, and movement history use protected APIs.
 - Routes: `/`, `/shop`, `/product/:id`, `/cart`, `/account`, `/checkout`, `/track`, and `/admin`.
@@ -42,6 +43,19 @@ The Phase 1 storefront presentation is preserved. Product, current price, prepar
    ```
 
    The container binds to localhost only and stores local data in a named Docker volume.
+
+### Optional Google sign-in
+
+Google sign-in requires a Google Identity Services OAuth **Web application** client ID. Create one in the [Google Cloud Console](https://console.cloud.google.com/apis/credentials) and configure authorized JavaScript origins for `http://localhost:5173` and `https://freshprawnsonline.onrender.com`. The app uses Google's popup button flow, so it does not use a redirect URI or a client secret. See Google's official [client ID setup guide](https://developers.google.com/identity/gsi/web/guides/get-google-api-clientid) for consent-screen setup.
+
+Set the same client ID in both variables in the root `.env` for local development:
+
+```env
+GOOGLE_CLIENT_ID="your-web-client-id.apps.googleusercontent.com"
+VITE_GOOGLE_CLIENT_ID="your-web-client-id.apps.googleusercontent.com"
+```
+
+On Render, add both variables to the service's Environment settings and redeploy, because `VITE_GOOGLE_CLIENT_ID` is included in the frontend build. The client ID is public and safe to include in the browser bundle; do not add a Google client secret. Until configured, email/password sign-in remains available and the Google button is hidden. The backend verifies Google's signed ID token, audience, issuer, expiry, and verified email before creating a session. A verified Google email matching an existing account links to that account, and its current role is retained.
 
 ### Run the frontend and API
 
@@ -116,7 +130,7 @@ Every `/api/v1/admin/*` endpoint requires a current database-verified admin acco
 - `PATCH /api/v1/orders/:id/delivery` is admin-only. It records a shop delivery person's name/contact or a manually entered third-party service label, reference, and admin-only details. `PATCH /api/v1/orders/:id/delivery/status` is admin-only and accepts only valid manual progress transitions. Customer order responses include the assigned shop contact or third-party label/reference, but omit internal delivery notes.
 - An order must have an assignment before it can move to `out_for_delivery`. Delivery progress reaching `in_transit` is coordinated with the order status; marking an order delivered/cancelled continues to use the existing stock-consumption/release workflow. Assignment changes do not rewrite the order's original delivery-fee snapshot.
 - Delivery fees are currently explicit Phase 1 server demo values (₹40 for shop delivery and ₹60 for third-party method); confirm the owner's final fee/area rules before treating these values as business policy. The third-party option records a preference only and does not dispatch a provider.
-- Authentication routes have an additional 10-request/15-minute rate limit. All private API responses use `Cache-Control: no-store`; protected routes verify the current user/role from MongoDB on each request.
+- Registration, email/password login, and Google sign-in have an additional 10-request/15-minute rate limit. Session refresh uses the standard API limit so page reloads do not consume the stricter sign-in budget. All private API responses use `Cache-Control: no-store`; protected routes verify the current user/role from MongoDB on each request.
 
 ### Provider-independent delivery adapter preparation
 

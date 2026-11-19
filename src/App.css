@@ -167,6 +167,27 @@
 .account-form label small { color: #808b83; font-size: 9px; font-weight: 400; }
 .account-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 20px; }
 .account-note { margin: 18px 0 0; padding-top: 14px; border-top: 1px solid #edf0ea; color: #879188 !important; font-size: 9px !important; }
+.account-dashboard { width: min(100%, 760px); }
+.google-signin { display: flex; justify-content: center; min-height: 44px; margin: 6px 0 12px; }
+.google-signin > div { min-width: min(100%, 360px); }
+.account-divider { display: flex; align-items: center; gap: 10px; margin: 12px 0 18px; color: #929a92; font-size: 9px; }
+.account-divider::before, .account-divider::after { content: ""; height: 1px; flex: 1; background: #edf0ea; }
+.customer-orders { margin-top: 25px; padding-top: 20px; border-top: 1px solid #edf0ea; }
+.customer-orders-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.customer-orders-heading h2 { margin: 0; color: #344b38; font: 500 22px var(--serif); }
+.customer-orders-heading p { margin-top: 4px; color: #89938b; font-size: 9px; }
+.customer-orders-empty { display: grid; justify-items: center; gap: 8px; padding: 24px 12px; border: 1px dashed #e1e8dd; border-radius: 5px; color: #7f907f; text-align: center; font-size: 10px; }
+.customer-order-list { display: grid; gap: 10px; }
+.customer-order-card { padding: 13px; border: 1px solid #e8ece5; border-radius: 6px; background: #fff; }
+.customer-order-top, .customer-order-bottom { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.customer-order-top > div b, .customer-order-top > div small { display: block; }
+.customer-order-top > div b { color: #465a49; font-size: 11px; }
+.customer-order-top > div small { margin-top: 4px; color: #909a91; font-size: 8px; }
+.customer-order-items { display: grid; gap: 4px; margin: 12px 0; color: #667467; font-size: 9px; }
+.customer-order-bottom { padding-top: 10px; border-top: 1px solid #f0f2ee; color: #879188; font-size: 8px; }
+.customer-order-bottom strong { color: #3c5b42; font-size: 12px; }
+.customer-order-card > .text-link { margin-top: 10px; }
+.text-button { border: 0; padding: 5px; background: transparent; color: #547b55; font-size: 9px; text-decoration: underline; }
 .account-nav { white-space: nowrap; }
 .form-error { padding: 11px 12px; border: 1px solid #f0c9bd; border-radius: 5px; background: #fff7f4; color: #99482f; font-size: 11px; line-height: 1.5; }
 button:disabled { cursor: not-allowed; opacity: .65; }

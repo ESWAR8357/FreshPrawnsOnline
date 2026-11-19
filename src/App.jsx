@@ -11,9 +11,42 @@ import { toPaymentDisplay } from './payment-display.js'
 import './App.css'
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || ''
+const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || ''
 let latestAccessToken = ''
 let authStateUpdater = () => {}
 let refreshInFlight = null
+let googleIdentityPromise = null
+let googleConfiguredClientId = ''
+let googleCredentialHandler = null
+
+function loadGoogleIdentityScript() {
+  if (window.google?.accounts?.id) return Promise.resolve(window.google)
+  if (!googleIdentityPromise) {
+    googleIdentityPromise = new Promise((resolve, reject) => {
+      let script = document.querySelector('script[data-google-identity]')
+      if (!script) {
+        script = document.createElement('script')
+        script.dataset.googleIdentity = 'true'
+        script.src = 'https://accounts.google.com/gsi/client'
+        script.async = true
+        script.defer = true
+      }
+      script.addEventListener('load', () => {
+        if (window.google?.accounts?.id) resolve(window.google)
+        else reject(new Error('Google sign-in did not load.'))
+      }, { once: true })
+      script.addEventListener('error', () => {
+        script.remove()
+        reject(new Error('Google sign-in could not be loaded.'))
+      }, { once: true })
+      if (!script.isConnected) document.head.append(script)
+    }).catch((error) => {
+      googleIdentityPromise = null
+      throw error
+    })
+  }
+  return googleIdentityPromise
+}
 function refreshSession() {
   if (!refreshInFlight) {
     refreshInFlight = fetch(`${apiBase}/api/v1/auth/refresh`, { method: 'POST', credentials: 'include' })
@@ -274,7 +307,7 @@ function App() {
             <Route path="/shop" element={<ShopPage products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={retryCatalogue} onAdd={addToCart} />} />
             <Route path="/product/:id" element={<ProductPage products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={retryCatalogue} onAdd={addToCart} />} />
             <Route path="/cart" element={<CartPage cart={cart} products={products} onChange={updateQuantity} />} />
-            <Route path="/account" element={<AccountPage currentUser={currentUser} authStatus={authStatus} onAuthenticated={onAuthenticated} onSignOut={signOut} />} />
+            <Route path="/account" element={<AccountPage currentUser={currentUser} authStatus={authStatus} authToken={authToken} onAuthenticated={onAuthenticated} onSignOut={signOut} />} />
             <Route path="/checkout" element={<CheckoutPage cart={cart} products={products} currentUser={currentUser} authToken={authToken} onPlaceOrder={(order) => { setActiveOrder(order); clearCart() }} />} />
             <Route path="/track" element={<TrackPage order={activeOrder} authToken={authToken} />} />
             <Route path="/admin/*" element={<AdminPage products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={retryCatalogue} currentUser={currentUser} authToken={authToken} />} />
@@ -452,12 +485,61 @@ function CartPage({ cart, products, onChange }) {
       <Link className="continue-shopping" to="/shop"><ArrowLeft size={16} /> Keep browsing</Link></section><aside className="order-summary"><h2>Order summary</h2><div className="summary-row"><span>Subtotal</span><b>{money(subtotal)}</b></div><div className="summary-row"><span>Delivery</span><span>Calculated next</span></div><div className="summary-total"><span>Total</span><strong>{money(subtotal)}</strong></div><p className="summary-disclaimer">Delivery fee and address are confirmed at checkout.</p><Link to="/checkout" className="button button-dark full-button">Continue to checkout <ArrowRight size={17} /></Link><div className="secure-note"><BadgeCheck size={15} /> No payment is collected in this demo</div></aside></div>}</main>
 }
 
-function AccountPage({ currentUser, authStatus, onAuthenticated, onSignOut }) {
+function AccountPage({ currentUser, authStatus, authToken, onAuthenticated, onSignOut }) {
   const navigate = useNavigate()
   const location = useLocation()
+  const googleButtonRef = useRef(null)
   const [mode, setMode] = useState('login')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    const buttonContainer = googleButtonRef.current
+    if (!googleClientId || !buttonContainer || currentUser || authStatus === 'loading') return undefined
+    let active = true
+    googleCredentialHandler = async (credential) => {
+      setBusy(true)
+      setError('')
+      try {
+        const { data } = await apiRequest('/api/v1/auth/google', {
+          method: 'POST',
+          body: JSON.stringify({ credential }),
+        })
+        onAuthenticated(data)
+        const destination = location.state?.from
+        navigate(typeof destination === 'string' && destination.startsWith('/') && !destination.startsWith('//') ? destination : '/', { replace: true })
+      } catch (requestError) {
+        setError(requestError.message || 'Google sign-in failed. Please try again.')
+      } finally {
+        setBusy(false)
+      }
+    }
+    loadGoogleIdentityScript()
+      .then((google) => {
+        if (!active) return
+        if (googleConfiguredClientId !== googleClientId) {
+          google.accounts.id.initialize({
+            client_id: googleClientId,
+            callback: (response) => googleCredentialHandler?.(response.credential),
+          })
+          googleConfiguredClientId = googleClientId
+        }
+        buttonContainer.replaceChildren()
+        google.accounts.id.renderButton(buttonContainer, {
+          theme: 'outline',
+          size: 'large',
+          shape: 'rectangular',
+          text: mode === 'register' ? 'signup_with' : 'signin_with',
+          width: Math.min(360, buttonContainer.clientWidth || 360),
+        })
+      })
+      .catch((loadError) => { if (active) setError(loadError.message || 'Google sign-in could not be loaded.') })
+    return () => {
+      active = false
+      googleCredentialHandler = null
+      buttonContainer.replaceChildren()
+    }
+  }, [authStatus, currentUser, location.state?.from, mode, navigate, onAuthenticated])
 
   const submit = async (event) => {
     event.preventDefault()
@@ -484,10 +566,88 @@ function AccountPage({ currentUser, authStatus, onAuthenticated, onSignOut }) {
   }
 
   if (currentUser) {
-    return <main className="page-main account-page"><div className="account-card"><div className="eyebrow">YOUR FRESH PRAWNS ACCOUNT</div><h1>You're signed in</h1><p>{currentUser.email}</p><p className="account-role">Account type: {currentUser.role}</p><div className="account-actions"><Link className="button button-dark" to={currentUser.role === 'admin' ? '/admin' : '/shop'}>{currentUser.role === 'admin' ? 'Open admin orders' : 'Continue shopping'} <ArrowRight size={16} /></Link><button className="button button-outline" type="button" onClick={onSignOut}>Sign out</button></div></div></main>
+    return <main className="page-main account-page"><div className={`account-card ${currentUser.role === 'customer' ? 'account-dashboard' : ''}`}><div className="eyebrow">YOUR FRESH PRAWNS ACCOUNT</div><h1>You're signed in</h1><p>{currentUser.email}</p><p className="account-role">Account type: {currentUser.role}</p><div className="account-actions"><Link className="button button-dark" to={currentUser.role === 'admin' ? '/admin' : '/shop'}>{currentUser.role === 'admin' ? 'Open admin orders' : 'Continue shopping'} <ArrowRight size={16} /></Link><button className="button button-outline" type="button" onClick={onSignOut}>Sign out</button></div>{currentUser.role === 'customer' && <CustomerOrderHistory authToken={authToken} />}</div></main>
   }
 
-  return <main className="page-main account-page"><div className="account-card"><div className="eyebrow">A SEAT AT OUR TABLE</div><h1>{mode === 'register' ? 'Create your account' : 'Welcome back'}</h1><p>{mode === 'register' ? 'Sign up to place and view your Hyderabad orders.' : 'Sign in to continue to checkout and your orders.'}</p><div className="account-mode" role="tablist" aria-label="Account action"><button type="button" role="tab" aria-selected={mode === 'login'} className={mode === 'login' ? 'active' : ''} onClick={() => { setMode('login'); setError('') }}>Sign in</button><button type="button" role="tab" aria-selected={mode === 'register'} className={mode === 'register' ? 'active' : ''} onClick={() => { setMode('register'); setError('') }}>Create account</button></div><form className="account-form" onSubmit={submit}><label>Email address<input name="email" type="email" autoComplete="email" maxLength="254" required /></label><label>Password<input name="password" type="password" autoComplete={mode === 'register' ? 'new-password' : 'current-password'} minLength="12" maxLength="128" required /><small>Use at least 12 characters.</small></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="button button-dark full-button" type="submit" disabled={busy}>{busy ? 'Please wait…' : mode === 'register' ? 'Create customer account' : 'Sign in'} <ArrowRight size={16} /></button></form><p className="account-note">Registration creates a customer account. Admin access is provisioned separately by the shop owner.</p></div></main>
+  return <main className="page-main account-page"><div className="account-card"><div className="eyebrow">A SEAT AT OUR TABLE</div><h1>{mode === 'register' ? 'Create your account' : 'Welcome back'}</h1><p>{mode === 'register' ? 'Sign up to place and view your Hyderabad orders.' : 'Sign in to continue to checkout and your orders.'}</p><div className="account-mode" role="tablist" aria-label="Account action"><button type="button" role="tab" aria-selected={mode === 'login'} className={mode === 'login' ? 'active' : ''} onClick={() => { setMode('login'); setError('') }}>Sign in</button><button type="button" role="tab" aria-selected={mode === 'register'} className={mode === 'register' ? 'active' : ''} onClick={() => { setMode('register'); setError('') }}>Create account</button></div>{googleClientId ? <><div className="google-signin" aria-label={mode === 'register' ? 'Sign up with Google' : 'Sign in with Google'}><div ref={googleButtonRef} /></div><div className="account-divider"><span>or use email</span></div></> : <p className="account-note">Google sign-in is not configured yet. You can still use email and password.</p>}<form className="account-form" onSubmit={submit}><label>Email address<input name="email" type="email" autoComplete="email" maxLength="254" required /></label><label>Password<input name="password" type="password" autoComplete={mode === 'register' ? 'new-password' : 'current-password'} minLength="12" maxLength="128" required /><small>Use at least 12 characters.</small></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="button button-dark full-button" type="submit" disabled={busy}>{busy ? 'Please wait…' : mode === 'register' ? 'Create customer account' : 'Sign in'} <ArrowRight size={16} /></button></form><p className="account-note">Google sign-in creates a customer account or signs into the account with the same verified Google email. Admin access remains limited to provisioned administrator accounts.</p></div></main>
+}
+
+function CustomerOrderHistory({ authToken }) {
+  const [orders, setOrders] = useState([])
+  const [nextCursor, setNextCursor] = useState(null)
+  const [status, setStatus] = useState('loading')
+  const [error, setError] = useState('')
+  const [retry, setRetry] = useState(0)
+  const [loadingMore, setLoadingMore] = useState(false)
+
+  useEffect(() => {
+    if (!authToken) return undefined
+    let active = true
+    let inFlight = false
+    const refreshOrders = async () => {
+      if (!active || inFlight || document.visibilityState !== 'visible') return
+      inFlight = true
+      try {
+        const { data, pagination } = await apiRequest('/api/v1/orders?limit=20', { token: authToken })
+        if (!active) return
+        setOrders((previous) => {
+          const currentPageIds = new Set(data.map((order) => order.id))
+          return [...data, ...previous.filter((order) => !currentPageIds.has(order.id))]
+        })
+        setNextCursor(pagination?.nextCursor || null)
+        setStatus(data.length ? 'ready' : 'empty')
+      } catch (requestError) {
+        if (!active) return
+        setError(requestError.message || 'Could not load your orders.')
+        setStatus('error')
+      } finally {
+        inFlight = false
+      }
+    }
+    const timer = window.setInterval(refreshOrders, 15000)
+    const onVisibilityChange = () => { if (document.visibilityState === 'visible') refreshOrders() }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    refreshOrders()
+    return () => {
+      active = false
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [authToken, retry])
+
+  const loadMore = async () => {
+    if (!nextCursor || loadingMore) return
+    setLoadingMore(true)
+    setError('')
+    try {
+      const { data, pagination } = await apiRequest(`/api/v1/orders?limit=20&cursor=${encodeURIComponent(nextCursor)}`, { token: authToken })
+      setOrders((previous) => {
+        const knownIds = new Set(previous.map((order) => order.id))
+        return [...previous, ...data.filter((order) => !knownIds.has(order.id))]
+      })
+      setNextCursor(pagination?.nextCursor || null)
+    } catch (requestError) {
+      setError(requestError.message || 'Could not load older orders.')
+    } finally {
+      setLoadingMore(false)
+    }
+  }
+
+  const labels = { pending: 'Received', confirmed: 'Confirmed', preparing: 'Preparing', out_for_delivery: 'Out for delivery', delivered: 'Delivered', cancelled: 'Cancelled' }
+  return <section className="customer-orders" aria-labelledby="customer-orders-heading">
+    <div className="customer-orders-heading"><div><h2 id="customer-orders-heading">My orders</h2><p>Your orders are saved to your account.</p></div><button type="button" className="text-button" onClick={() => { setError(''); setStatus('loading'); setRetry((count) => count + 1) }} disabled={status === 'loading'}>Refresh</button></div>
+    {status === 'loading' && <p role="status">Loading your orders…</p>}
+    {status === 'error' && <div className="form-error" role="alert">{error}<button type="button" className="text-button" onClick={() => { setError(''); setStatus('loading'); setRetry((count) => count + 1) }}> Try again</button></div>}
+    {status === 'empty' && <div className="customer-orders-empty"><PackageCheck size={22} /><p>Your orders will appear here after checkout.</p><Link to="/shop" className="text-link">Browse prawns <ArrowRight size={14} /></Link></div>}
+    {orders.length > 0 && <div className="customer-order-list">{orders.map((order) => <article className="customer-order-card" key={order.id}>
+      <div className="customer-order-top"><div><b>{`FP-${order.id.slice(-6).toUpperCase()}`}</b><small>{new Date(order.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</small></div><span className={`admin-status ${String(order.status).replaceAll('_', '-')}`}>{labels[order.status] || order.status}</span></div>
+      <div className="customer-order-items">{order.items.map((item, index) => <span key={`${order.id}-${index}`}>{item.productName} · {formatWeight(item.weightGrams)} × {item.quantity} · {item.preparation}</span>)}</div>
+      <div className="customer-order-bottom"><span>{toPaymentDisplay(order).paymentMethodLabel} · {toPaymentDisplay(order).paymentStatusLabel}</span><strong>{money(order.totalPaise / 100)}</strong></div>
+      <Link to={`/track?order=${encodeURIComponent(order.id)}`} className="text-link">View order updates <ArrowRight size={14} /></Link>
+    </article>)}</div>}
+    {error && status !== 'error' && <p className="form-error" role="alert">{error}</p>}
+    {nextCursor && <button className="button button-outline full-button" type="button" onClick={loadMore} disabled={loadingMore}>{loadingMore ? 'Loading…' : 'Load older orders'}</button>}
+  </section>
 }
 
 function CheckoutPage({ cart, products, currentUser, authToken, onPlaceOrder }) {
@@ -632,12 +792,12 @@ function TrackPage({ order, authToken }) {
     <form className="tracking-search" onSubmit={searchOrders}><label htmlFor="order-lookup">Order number</label><div><input id="order-lookup" value={lookup} onChange={(event) => setLookup(event.target.value)} placeholder="e.g. FP-123456" /><button className="button button-dark" type="submit" disabled={lookupBusy}>{lookupBusy ? 'Searching…' : 'Find order'} <ArrowRight size={16} /></button></div><small>Search uses orders linked to your signed-in account.</small></form>
     {lookupError && <p className="form-error" role="alert">{lookupError}</p>}
     {shownOrder ? <section className="tracking-card"><div className="tracking-card-head"><div><span className="status-pill"><i /> {shownOrder.status === 'pending' ? 'Order received' : shownOrder.status}</span><h2>Order {shownOrder.id}</h2><p>Placed {shownOrder.createdAt}</p></div><strong>{money(shownOrder.total)}</strong></div><div className="tracking-steps">{steps.map((step, index) => <div className={`tracking-step ${index <= stage ? 'completed' : ''}`} key={step}><span className="tracking-step-icon">{index <= stage ? <Check size={15} /> : index === 1 ? <Fish size={15} /> : index === 2 ? <Truck size={15} /> : <PackageCheck size={15} />}</span><b>{step}</b>{index < steps.length - 1 && <span className="tracking-step-line" />}</div>)}</div><div className="tracking-order-meta"><div><MapPin size={16} /><span><b>Delivering to</b><small>{shownOrder.address || 'Hyderabad'}</small></span></div><div><Truck size={16} /><span><b>Delivery method</b><small>{shownOrder.deliveryMethod === 'partner' ? 'Third-party service' : 'Our delivery person'}</small></span></div><div><PackageCheck size={16} /><span><b>Delivery status</b><small>{deliveryStatusLabel(shownOrder.delivery?.status)}</small></span></div><div><Banknote size={16} /><span><b>Payment</b><small>{shownOrder.paymentMethodLabel} · {shownOrder.paymentStatusLabel}</small></span></div>{shownOrder.delivery?.method === 'shop' && shownOrder.delivery.personName && <div><Headset size={16} /><span><b>Delivery contact</b><small>{shownOrder.delivery.personName}{shownOrder.delivery.personPhone ? ` · ${shownOrder.delivery.personPhone}` : ''}</small></span></div>}{shownOrder.delivery?.method === 'third_party' && (shownOrder.delivery.serviceName || shownOrder.delivery.reference) && <div><PackageCheck size={16} /><span><b>Delivery reference</b><small>{[shownOrder.delivery.serviceName, shownOrder.delivery.reference].filter(Boolean).join(' · ')}</small></span></div>}</div><section className="order-event-history" aria-labelledby="customer-order-history"><h3 id="customer-order-history">Order updates</h3>{eventsError && <p className="form-error" role="alert">{eventsError}</p>}{orderEvents.length ? <ol>{orderEvents.map((item) => <li key={item.id}><b>{item.type.replaceAll('_', ' ')}</b><small>{item.from && item.to ? `${item.from.replaceAll('_', ' ')} → ${item.to.replaceAll('_', ' ')}` : item.to?.replaceAll('_', ' ')}</small><time dateTime={item.createdAt}>{new Date(item.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</time></li>)}</ol> : !eventsError && <p>No updates recorded yet.</p>}</section><p className="tracking-demo">Order status and history refresh automatically about every 15 seconds while this page is open.</p></section> : <div className="tracking-empty"><div className="tracking-empty-icon"><PackageCheck size={29} /></div><h2>No order to show just yet</h2><p>Place an order while signed in, or search for an order linked to your account.</p><Link to="/shop" className="text-link">Browse fresh prawns <ArrowRight size={16} /></Link></div>}
-    <div className="tracking-support"><Headset size={18} /><span>Need a hand? <a href="tel:+914040001234">Call our shop at +91 40 4000 1234</a></span></div>
+    <div className="tracking-support"><Headset size={18} /><span>Need a hand? <a href="tel:+919346338357">Call our shop at +91 93463 38357</a></span></div>
   </main>
 }
 
 function SupportSection() {
-  return <section id="contact" className="support-section"><div className="support-icon"><Headset size={24} /></div><div><div className="eyebrow">WE'RE RIGHT HERE</div><h2>Questions? Let's talk.</h2><p>Our little shop is always happy to help with your order.</p></div><div className="support-actions"><a className="button button-dark" href="tel:+914040001234">Call the shop <ArrowRight size={16} /></a><span>+91 40 4000 1234 · Hyderabad</span></div></section>
+  return <section id="contact" className="support-section"><div className="support-icon"><Headset size={24} /></div><div><div className="eyebrow">WE'RE RIGHT HERE</div><h2>Questions? Let's talk.</h2><p>Our little shop is always happy to help with your order.</p></div><div className="support-actions"><a className="button button-dark" href="tel:+919346338357">Call the shop <ArrowRight size={16} /></a><span>+91 93463 38357 · Hyderabad</span></div></section>
 }
 
 function Footer() {

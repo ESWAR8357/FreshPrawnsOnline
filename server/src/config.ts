@@ -21,6 +21,7 @@ const configSchema = z.object({
   JWT_ACCESS_SECRET: z.string().min(32, 'must contain at least 32 characters'),
   JWT_ACCESS_TTL_SECONDS: z.coerce.number().int().min(60).max(900).default(600),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(30),
+  GOOGLE_CLIENT_ID: z.string().trim().optional(),
   CORS_ORIGINS: z.string().default('http://localhost:5173'),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(1000).default(900000),
   RATE_LIMIT_MAX: z.coerce.number().int().min(1).max(10000).default(120),

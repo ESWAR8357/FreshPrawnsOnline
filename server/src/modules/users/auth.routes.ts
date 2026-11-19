@@ -6,11 +6,13 @@ import { HttpError } from '../../http-error.js'
 import type { ServerConfig } from '../../config.js'
 import type { AuthService } from './auth.service.js'
 import { requireAdmin } from './auth.middleware.js'
+import { verifyGoogleIdToken } from './google-id-token.js'
 
 const credentialsSchema = z.object({
   email: z.string().trim().email().max(254).transform((email) => email.toLowerCase()),
   password: z.string().min(12).max(128),
 }).strict()
+const googleCredentialSchema = z.object({ credential: z.string().min(1).max(8192) }).strict()
 
 const cookieName = 'freshprawns_refresh'
 const credentialRateLimit = rateLimit({
@@ -83,6 +85,32 @@ export function createAuthRouter(service: AuthService, config: ServerConfig, aut
       }
     })
   }
+
+  router.post('/google', credentialRateLimit, async (request, response, next) => {
+    if (!config.GOOGLE_CLIENT_ID) {
+      response.status(503).json({ error: { code: 'GOOGLE_SIGNIN_NOT_CONFIGURED', message: 'Google sign-in is not configured yet' } })
+      return
+    }
+    if (!service.loginWithGoogle) {
+      response.status(503).json({ error: { code: 'GOOGLE_SIGNIN_UNAVAILABLE', message: 'Google sign-in is unavailable' } })
+      return
+    }
+    const parsed = googleCredentialSchema.safeParse(request.body)
+    if (!parsed.success) {
+      validationError(response, parsed.error)
+      return
+    }
+    try {
+      const identity = await verifyGoogleIdToken(parsed.data.credential, config.GOOGLE_CLIENT_ID)
+      const tokens = await service.loginWithGoogle(identity.subject, identity.email)
+      setRefreshCookie(response, config, tokens.refreshToken)
+      response.json({
+        data: { user: tokens.user, accessToken: tokens.accessToken, expiresIn: config.JWT_ACCESS_TTL_SECONDS },
+      })
+    } catch (error) {
+      next(error)
+    }
+  })
 
   router.post('/refresh', async (request, response, next) => {
     const origin = request.header('origin')

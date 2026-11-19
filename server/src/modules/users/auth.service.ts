@@ -26,6 +26,7 @@ export type AuthServiceConfig = {
 export interface AuthService {
   register(email: string, password: string): Promise<AuthTokens>
   login(email: string, password: string): Promise<AuthTokens>
+  loginWithGoogle?(subject: string, email: string): Promise<AuthTokens>
   refresh(refreshToken: string): Promise<AuthTokens>
   logout(refreshToken: string | null): Promise<void>
   getActiveUser(id: string): Promise<AuthUser | null>
@@ -62,8 +63,39 @@ export class MongoAuthService implements AuthService {
 
   async login(email: string, password: string): Promise<AuthTokens> {
     const user = await User.findOne({ email }).select('+passwordHash')
-    if (!user || user.status !== 'active' || !await argon2.verify(user.passwordHash, password)) {
+    if (!user || user.status !== 'active' || !user.passwordHash || !await argon2.verify(user.passwordHash, password)) {
       throw new HttpError(401, 'INVALID_CREDENTIALS', 'Email or password is incorrect')
+    }
+    return this.issueTokens(toAuthUser(user), randomUUID())
+  }
+
+  async loginWithGoogle(subject: string, email: string): Promise<AuthTokens> {
+    let user = await User.findOne({ googleSubject: subject })
+    if (!user) {
+      user = await User.findOne({ email }).select('+googleSubject')
+      if (user) {
+        if (user.status !== 'active') throw new HttpError(403, 'ACCOUNT_UNAVAILABLE', 'This account is unavailable')
+        if (user.googleSubject && user.googleSubject !== subject) {
+          throw new HttpError(409, 'GOOGLE_ACCOUNT_MISMATCH', 'This email is linked to a different Google account')
+        }
+        user.googleSubject = subject
+        try {
+          await user.save()
+        } catch (error) {
+          if (!(typeof error === 'object' && error !== null && 'code' in error && error.code === 11000)) throw error
+          user = await User.findOne({ googleSubject: subject })
+        }
+      } else {
+        try {
+          user = await User.create({ email, googleSubject: subject, role: 'customer' })
+        } catch (error) {
+          if (!(typeof error === 'object' && error !== null && 'code' in error && error.code === 11000)) throw error
+          user = await User.findOne({ googleSubject: subject })
+        }
+      }
+    }
+    if (!user || user.status !== 'active') {
+      throw new HttpError(401, 'GOOGLE_ACCOUNT_UNAVAILABLE', 'This Google account could not be signed in')
     }
     return this.issueTokens(toAuthUser(user), randomUUID())
   }

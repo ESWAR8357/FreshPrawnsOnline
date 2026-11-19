@@ -190,6 +190,20 @@ export const openApiSpec = {
                     },
                   },
     },
+    '/api/v1/auth/google': {
+                  post: {
+                    summary: 'Sign up or sign in with a verified Google account',
+                    requestBody: {
+                      required: true,
+                      content: { 'application/json': { schema: { type: 'object', required: ['credential'], properties: { credential: { type: 'string', maxLength: 8192 } }, additionalProperties: false } } },
+                    },
+                    responses: {
+                      '200': { description: 'Access token returned; rotating refresh token set in an HttpOnly cookie' },
+                      '401': { description: 'Google credential invalid or email not verified' },
+                      '503': { description: 'Google sign-in is not configured or temporarily unavailable' },
+                    },
+                  },
+    },
     '/api/v1/auth/refresh': {
                   post: {
                     summary: 'Rotate the refresh token and issue a new access token',
