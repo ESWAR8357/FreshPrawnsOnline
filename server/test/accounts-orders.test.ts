@@ -220,6 +220,18 @@ describe('account and order authorization APIs', () => {
     expect(auth.logout).toHaveBeenCalledWith('rotated-refresh-token')
   })
 
+  it('allows same-origin logout behind the production HTTPS proxy', async () => {
+    const response = await request(app)
+      .post('/api/v1/auth/logout')
+      .set('Host', 'freshprawnsonline.onrender.com')
+      .set('X-Forwarded-Proto', 'https')
+      .set('Origin', 'https://freshprawnsonline.onrender.com')
+      .set('Cookie', 'freshprawns_refresh=opaque-refresh-token')
+
+    expect(response.status).toBe(204)
+    expect(auth.logout).toHaveBeenCalledWith('opaque-refresh-token')
+  })
+
   it('rejects refresh-cookie actions from untrusted browser origins', async () => {
     const response = await request(app)
       .post('/api/v1/auth/refresh')

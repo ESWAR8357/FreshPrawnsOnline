@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import type { RequestHandler, Response } from 'express'
+import type { Request, RequestHandler, Response } from 'express'
 import { rateLimit } from 'express-rate-limit'
 import { z } from 'zod'
 import { HttpError } from '../../http-error.js'
@@ -24,6 +24,12 @@ const credentialRateLimit = rateLimit({
     response.status(429).json({ error: { code: 'RATE_LIMITED', message: 'Too many sign-in attempts. Try again later.' } })
   },
 })
+
+function isAllowedRequestOrigin(request: Request, config: ServerConfig): boolean {
+  const origin = request.header('origin')
+  if (!origin || config.corsOrigins.includes(origin)) return true
+  return origin === request.protocol + '://' + request.get('host')
+}
 
 function getRefreshToken(cookieHeader: string | undefined): string | null {
   const entry = cookieHeader?.split(';').map((part) => part.trim())
@@ -113,8 +119,7 @@ export function createAuthRouter(service: AuthService, config: ServerConfig, aut
   })
 
   router.post('/refresh', async (request, response, next) => {
-    const origin = request.header('origin')
-    if (origin && !config.corsOrigins.includes(origin)) {
+    if (!isAllowedRequestOrigin(request, config)) {
       response.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: 'Request origin is not allowed' } })
       return
     }
@@ -134,8 +139,7 @@ export function createAuthRouter(service: AuthService, config: ServerConfig, aut
   })
 
   router.post('/logout', async (request, response, next) => {
-    const origin = request.header('origin')
-    if (origin && !config.corsOrigins.includes(origin)) {
+    if (!isAllowedRequestOrigin(request, config)) {
       response.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: 'Request origin is not allowed' } })
       return
     }
