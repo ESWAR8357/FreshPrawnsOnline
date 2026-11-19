@@ -75,6 +75,9 @@ export function buildApp(
   app.use(rateLimit({
     windowMs: config.RATE_LIMIT_WINDOW_MS,
     limit: config.RATE_LIMIT_MAX,
+    // Render polls /health every few seconds. Keep those probes out of the
+    // customer request budget so the service does not mark itself unhealthy.
+    skip: (request) => request.path === '/health' || request.path.startsWith('/health/'),
     standardHeaders: 'draft-8',
     legacyHeaders: false,
     handler: (_request, response) => {
