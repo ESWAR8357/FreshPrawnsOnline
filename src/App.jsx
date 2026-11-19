@@ -310,7 +310,7 @@ function App() {
             <Route path="/account" element={<AccountPage currentUser={currentUser} authStatus={authStatus} onAuthenticated={onAuthenticated} onSignOut={signOut} />} />
             <Route path="/checkout" element={<CheckoutPage cart={cart} products={products} currentUser={currentUser} authToken={authToken} onPlaceOrder={(order) => { setActiveOrder(order); clearCart() }} />} />
             <Route path="/track" element={<TrackPage order={activeOrder} authToken={authToken} currentUser={currentUser} />} />
-            <Route path="/admin/*" element={<AdminPage products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={retryCatalogue} currentUser={currentUser} authToken={authToken} />} />
+            <Route path="/admin/*" element={<AdminPage products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={retryCatalogue} currentUser={currentUser} authToken={authToken} authStatus={authStatus} onSignOut={signOut} />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </ErrorBoundary>
@@ -527,10 +527,10 @@ function AccountPage({ currentUser, authStatus, onAuthenticated, onSignOut }) {
         buttonContainer.replaceChildren()
         google.accounts.id.renderButton(buttonContainer, {
           theme: 'outline',
-          size: 'large',
+          size: 'medium',
           shape: 'rectangular',
           text: mode === 'register' ? 'signup_with' : 'signin_with',
-          width: Math.min(360, buttonContainer.clientWidth || 360),
+          width: Math.min(260, buttonContainer.clientWidth || 260),
         })
       })
       .catch((loadError) => { if (active) setError(loadError.message || 'Google sign-in could not be loaded.') })
@@ -806,7 +806,7 @@ function Footer() {
   return <footer className="site-footer"><div className="footer-main"><Link to="/" className="brand footer-brand"><span className="brand-mark"><Fish size={21} /></span><span className="brand-name">fresh<span>prawns</span><small>ONLINE · HYDERABAD</small></span></Link><p>Good prawns, good food, good mood.<br />A neighbourhood shop, with a little more convenience.</p><div className="footer-links"><Link to="/shop">Shop</Link><Link to="/track">Track orders</Link><Link to="/admin">Admin</Link></div></div><div className="footer-bottom"><span>© 2026 Fresh Prawns Online · Sample storefront for Phase 1</span><span>Made with care in Hyderabad <span className="footer-heart">♥</span></span></div></footer>
 }
 
-function AdminPage({ products, catalogueStatus, catalogueError, onRetry, currentUser, authToken }) {
+function AdminPage({ products, catalogueStatus, catalogueError, onRetry, currentUser, authToken, authStatus, onSignOut }) {
   const [tab, setTab] = useState('overview')
   const [selectedOrder, setSelectedOrder] = useState(null)
   const [orders, setOrders] = useState([])
@@ -897,10 +897,11 @@ function AdminPage({ products, catalogueStatus, catalogueError, onRetry, current
     }
   }
 
-  if (!currentUser) return <main className="page-main account-page"><div className="account-card"><div className="eyebrow">SHOP ADMIN</div><h1>Administrator sign-in required</h1><p>Admin access is verified by the API. Create the first admin account using the server’s secure setup command.</p><Link className="button button-dark" to="/account" state={{ from: '/admin' }}>Sign in <ArrowRight size={16} /></Link></div></main>
+  if (authStatus === 'loading') return <main className="page-main"><div className="empty-state" role="status"><h1>Checking administrator access…</h1></div></main>
+  if (!currentUser) return <main className="page-main account-page"><div className="account-card"><div className="eyebrow">SHOP ADMIN</div><h1>Administrator sign-in required</h1><p>Sign in with your provisioned administrator account to open the shop dashboard.</p><Link className="button button-dark" to="/account" state={{ from: '/admin' }}>Sign in <ArrowRight size={16} /></Link></div></main>
   if (currentUser.role !== 'admin') return <main className="page-main account-page"><div className="account-card"><div className="eyebrow">SHOP ADMIN</div><h1>Administrator access only</h1><p>This customer account cannot open the shop dashboard.</p><Link className="button button-outline" to="/">Back to storefront</Link></div></main>
 
-  return <main className="admin-page"><aside className="admin-sidebar"><Link to="/" className="admin-brand"><span className="brand-mark"><Fish size={21} /></span><span>Fresh Prawns<small>SHOP ADMIN</small></span></Link><div className="admin-side-label">WORKSPACE</div><nav aria-label="Admin navigation">{tabs.map((item) => <button className={tab === item.id ? 'admin-nav-item active' : 'admin-nav-item'} key={item.id} onClick={() => setTab(item.id)} type="button">{item.id === 'overview' ? <SlidersHorizontal size={17} /> : item.id === 'products' ? <Fish size={17} /> : <PackageCheck size={17} />}{item.label}{item.id === 'orders' && <span className="nav-count">{orders.length}</span>}</button>)}</nav><div className="admin-sidebar-bottom"><span className="admin-avatar">A</span><span><b>{currentUser.email}</b><small>Shop administrator</small></span></div></aside><div className="admin-content"><div className="admin-topbar"><div className="admin-breadcrumb">Workspace <span>/</span> <b>{tabs.find((item) => item.id === tab)?.label}</b></div><Link to="/" className="view-store-link"><ArrowLeft size={14} /> View storefront</Link></div><div className="admin-main-content">{tab === 'overview' && <AdminOverview products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={onRetry} orders={orders} setTab={setTab} />}{tab === 'products' && <AdminProducts products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={onRetry} authToken={authToken} />}{tab === 'orders' && <><AdminOrders orders={orders} selectedOrder={selectedOrder} setSelectedOrder={setSelectedOrder} onUpdateOrder={updateOrder} statusError={statusError} authToken={authToken} />{ordersStatus === 'loading' && <div role="status">Loading orders…</div>}{ordersStatus === 'error' && <div role="alert" className="form-error">{ordersError}<button type="button" onClick={() => { setOrdersStatus('loading'); setOrdersRetry((count) => count + 1) }}> Try again</button></div>}</>}</div></div></main>
+  return <main className="admin-page"><aside className="admin-sidebar"><Link to="/" className="admin-brand"><span className="brand-mark"><Fish size={21} /></span><span>Fresh Prawns<small>SHOP ADMIN</small></span></Link><div className="admin-side-label">WORKSPACE</div><nav aria-label="Admin navigation">{tabs.map((item) => <button className={tab === item.id ? 'admin-nav-item active' : 'admin-nav-item'} key={item.id} onClick={() => setTab(item.id)} type="button">{item.id === 'overview' ? <SlidersHorizontal size={17} /> : item.id === 'products' ? <Fish size={17} /> : <PackageCheck size={17} />}{item.label}{item.id === 'orders' && <span className="nav-count">{orders.length}</span>}</button>)}</nav><div className="admin-sidebar-bottom"><span className="admin-avatar">A</span><span className="admin-sidebar-identity"><b>{currentUser.email}</b><small>Shop administrator</small></span><button className="admin-signout" onClick={onSignOut} type="button">Sign out</button></div></aside><div className="admin-content"><div className="admin-topbar"><div className="admin-breadcrumb">Workspace <span>/</span> <b>{tabs.find((item) => item.id === tab)?.label}</b></div><button className="admin-top-signout" onClick={onSignOut} type="button">Sign out</button><Link to="/" className="view-store-link"><ArrowLeft size={14} /> View storefront</Link></div><div className="admin-main-content">{tab === 'overview' && <AdminOverview products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={onRetry} orders={orders} setTab={setTab} />}{tab === 'products' && <AdminProducts products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={onRetry} authToken={authToken} />}{tab === 'orders' && <><AdminOrders orders={orders} selectedOrder={selectedOrder} setSelectedOrder={setSelectedOrder} onUpdateOrder={updateOrder} statusError={statusError} authToken={authToken} />{ordersStatus === 'loading' && <div role="status">Loading orders…</div>}{ordersStatus === 'error' && <div role="alert" className="form-error">{ordersError}<button type="button" onClick={() => { setOrdersStatus('loading'); setOrdersRetry((count) => count + 1) }}> Try again</button></div>}</>}</div></div></main>
 }
 
 function AdminOverview({ products, catalogueStatus, catalogueError, onRetry, orders, setTab }) {

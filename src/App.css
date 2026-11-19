@@ -169,7 +169,7 @@
 .account-note { margin: 18px 0 0; padding-top: 14px; border-top: 1px solid #edf0ea; color: #879188 !important; font-size: 9px !important; }
 .account-dashboard { width: min(100%, 760px); }
 .google-signin { display: flex; justify-content: center; min-height: 44px; margin: 6px 0 12px; }
-.google-signin > div { min-width: min(100%, 360px); }
+.google-signin > div { width: min(100%, 260px); min-width: 0; }
 .account-divider { display: flex; align-items: center; gap: 10px; margin: 12px 0 18px; color: #929a92; font-size: 9px; }
 .account-divider::before, .account-divider::after { content: ""; height: 1px; flex: 1; background: #edf0ea; }
 .customer-orders { margin-top: 25px; padding-top: 20px; border-top: 1px solid #edf0ea; }
@@ -714,3 +714,23 @@ button:disabled { cursor: not-allowed; opacity: .65; }
 @media (prefers-reduced-motion: no-preference) {
   .product-card, .button, .icon-add, .filter-pill { transition-duration: .2s; }
 }
+
+
+/* Keep admin workspaces separate from customer storefront navigation. */
+body:has(.admin-page) .announcement,
+body:has(.admin-page) .site-header,
+body:has(.admin-page) .site-footer { display: none; }
+.admin-sidebar-bottom { flex-wrap: wrap; gap: 10px; }
+.admin-sidebar-identity { flex: 1; min-width: 0; }
+.admin-sidebar-identity b { overflow: hidden; text-overflow: ellipsis; }
+.admin-signout { margin-left: 46px; padding: 7px 10px; border: 1px solid #dce8e4; border-radius: 9px; background: #fff; color: #526f70; font: inherit; font-size: 12px; }
+.admin-signout:hover { border-color: #b8d8cc; background: #f3faf6; color: #08756f; }
+.google-signin { min-height: 40px; margin-block: 8px 14px; }
+.google-signin > div { max-width: 260px; }
+@media (max-width: 760px) {
+  .admin-sidebar-bottom { display: none; }
+  .admin-signout { margin-left: 0; }
+}
+
+.admin-top-signout { display: none; }
+@media (max-width: 760px) { .admin-top-signout { display: inline-flex; align-items: center; min-height: 36px; padding: 6px 10px; border: 1px solid #dce8e4; border-radius: 9px; background: #fff; color: #526f70; font: inherit; font-size: 12px; } }
