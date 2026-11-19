@@ -13,7 +13,9 @@
     "test:api": "npm --prefix server test",
     "typecheck:api": "npm --prefix server run typecheck",
     "start:api": "npm --prefix server start",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:staging": "npm install && npm run build && npm --prefix server install && npm --prefix server run build",
+    "start:staging": "node server/dist/src/index.js"
   },
   "dependencies": {
     "lucide-react": "^1.75.0",

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { Component, useEffect, useRef, useState } from 'react'
 import { BrowserRouter, Link, NavLink, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   ArrowDownRight, ArrowLeft, ArrowRight, BadgeCheck, Banknote, Check, Clock3,
@@ -111,6 +111,33 @@ function toStoreProduct(item) {
     availableGrams: item.stock.availableGrams,
     preparationOptions: item.preparationOptions || [],
     image: item.imageUrl || '',
+  }
+}
+
+class ErrorBoundary extends Component {
+  constructor(props) {
+    super(props)
+    this.state = { hasError: false }
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true }
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <main className="page-main">
+          <div className="empty-state" role="alert">
+            <Fish size={34} />
+            <h1>Something went wrong</h1>
+            <p>Reload the page to try again. If the problem continues, contact the shop.</p>
+            <button className="button button-outline" type="button" onClick={() => this.setState({ hasError: false })}>
+              Try again
+            </button>
+          </div>
+        </main>
+      )
+    }
+    return this.props.children
   }
 }
 
@@ -241,17 +268,19 @@ function App() {
       <div className="app-shell min-h-screen">
         <Announcement />
         <Header cartCount={cartCount} menuOpen={menuOpen} setMenuOpen={setMenuOpen} currentUser={currentUser} />
-        <Routes>
-          <Route path="/" element={<HomePage products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={retryCatalogue} onAdd={addToCart} />} />
-          <Route path="/shop" element={<ShopPage products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={retryCatalogue} onAdd={addToCart} />} />
-          <Route path="/product/:id" element={<ProductPage products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={retryCatalogue} onAdd={addToCart} />} />
-          <Route path="/cart" element={<CartPage cart={cart} products={products} onChange={updateQuantity} />} />
-          <Route path="/account" element={<AccountPage currentUser={currentUser} authStatus={authStatus} onAuthenticated={onAuthenticated} onSignOut={signOut} />} />
-          <Route path="/checkout" element={<CheckoutPage cart={cart} products={products} currentUser={currentUser} authToken={authToken} onPlaceOrder={(order) => { setActiveOrder(order); clearCart() }} />} />
-          <Route path="/track" element={<TrackPage order={activeOrder} authToken={authToken} />} />
-          <Route path="/admin/*" element={<AdminPage products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={retryCatalogue} currentUser={currentUser} authToken={authToken} />} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
+        <ErrorBoundary>
+          <Routes>
+            <Route path="/" element={<HomePage products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={retryCatalogue} onAdd={addToCart} />} />
+            <Route path="/shop" element={<ShopPage products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={retryCatalogue} onAdd={addToCart} />} />
+            <Route path="/product/:id" element={<ProductPage products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={retryCatalogue} onAdd={addToCart} />} />
+            <Route path="/cart" element={<CartPage cart={cart} products={products} onChange={updateQuantity} />} />
+            <Route path="/account" element={<AccountPage currentUser={currentUser} authStatus={authStatus} onAuthenticated={onAuthenticated} onSignOut={signOut} />} />
+            <Route path="/checkout" element={<CheckoutPage cart={cart} products={products} currentUser={currentUser} authToken={authToken} onPlaceOrder={(order) => { setActiveOrder(order); clearCart() }} />} />
+            <Route path="/track" element={<TrackPage order={activeOrder} authToken={authToken} />} />
+            <Route path="/admin/*" element={<AdminPage products={products} catalogueStatus={catalogueStatus} catalogueError={catalogueError} onRetry={retryCatalogue} currentUser={currentUser} authToken={authToken} />} />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </ErrorBoundary>
         <Footer />
         {toast && <div className="cart-toast" role="status" aria-live="polite"><span className="cart-toast-check"><Check size={16} /></span><span>{toast.message}</span><Link to="/cart" onClick={() => setToast(null)}>View cart</Link><button type="button" aria-label="Dismiss notification" onClick={() => setToast(null)}><X size={16} /></button></div>}
       </div>

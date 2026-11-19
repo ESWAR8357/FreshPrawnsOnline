@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import { existsSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import cors from 'cors'
 import express, { type ErrorRequestHandler } from 'express'
 import { rateLimit } from 'express-rate-limit'
@@ -31,8 +34,10 @@ export function buildApp(
   readDatabaseState: () => ReturnType<typeof getDatabaseState> = getDatabaseState,
   catalogueRepository: CatalogueRepository = new MongoCatalogueRepository(),
   services: AppServices = {},
+  frontendDistPath?: string,
 ) {
   const app = express()
+  app.set('trust proxy', 1)
   const logger = pino({
     level: config.LOG_LEVEL,
     redact: ['req.headers.authorization', 'req.headers.cookie', 'res.headers["set-cookie"]'],
@@ -97,9 +102,18 @@ export function buildApp(
   app.use('/api/v1/admin/stock', createAdminStockRouter(authenticate, services.adminStock))
   app.get('/openapi.json', (_request, response) => response.json(openApiSpec))
 
-  app.use((_request, response) => {
+  app.use('/api', (_request, response) => {
     response.status(404).json({ error: { code: 'NOT_FOUND', message: 'Route not found' } })
   })
+
+  const frontendDist = frontendDistPath
+    ?? resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'dist')
+  if (existsSync(frontendDist)) {
+    app.use(express.static(frontendDist))
+    app.get('/{*splat}', (_request, response) => {
+      response.sendFile(resolve(frontendDist, 'index.html'))
+    })
+  }
 
   const errorHandler: ErrorRequestHandler = (error: unknown, _request, response, next) => {
     if (response.headersSent) return next(error)

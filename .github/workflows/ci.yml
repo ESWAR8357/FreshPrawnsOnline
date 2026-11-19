@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  checks:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+
+      # -----------------------------------------------------------------------
+      # Frontend
+      # -----------------------------------------------------------------------
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Lint frontend
+        run: npm run lint
+
+      - name: Run frontend tests
+        run: npm run test:frontend
+
+      - name: Build frontend
+        run: npm run build
+
+      # -----------------------------------------------------------------------
+      # Backend
+      # -----------------------------------------------------------------------
+      - name: Install backend dependencies
+        run: npm --prefix server ci
+
+      - name: Lint backend
+        run: npm --prefix server run lint
+
+      - name: Typecheck backend
+        run: npm --prefix server run typecheck
+
+      - name: Run backend tests
+        run: npm --prefix server test
+
+      - name: Build backend
+        run: npm --prefix server run build
