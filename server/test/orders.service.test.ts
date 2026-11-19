@@ -63,6 +63,9 @@ describe('Mongo order service', () => {
     status: 'pending',
     stockReservationState: 'reserved',
     deliveryMethod: 'shop' as const,
+    paymentMethod: 'pay_on_delivery' as const,
+    paymentStatus: 'pending_collection' as const,
+    paymentCollectedAt: null,
     deliveryAssignment: {
       method: 'shop' as const,
       status: 'not_assigned' as const,
@@ -117,6 +120,9 @@ describe('Mongo order service', () => {
       deliveryFeePaise: 4000,
       totalPaise: 42000,
       stockReservationState: 'reserving',
+      paymentMethod: 'pay_on_delivery',
+      paymentStatus: 'pending_collection',
+      paymentCollectedAt: null,
       items: [expect.objectContaining({ pricePerKgPaise: 68000, lineTotalPaise: 38000 })],
     }))
     expect(Stock.updateOne).toHaveBeenCalledWith(
@@ -234,6 +240,97 @@ describe('Mongo order service', () => {
       }),
       { new: true, runValidators: true },
     )
+  })
+
+  it('marks an unpaid cancelled order not collectible in the same audited terminal update', async () => {
+    database.findOrderById.mockResolvedValue({ ...document, events: [] })
+
+    await service.updateStatus(orderId.toString(), 'cancelled', {
+      id: '507f1f77bcf86cd799439014',
+      role: 'admin',
+    })
+
+    expect(database.updateStock).toHaveBeenCalled()
+    expect(database.updateOrder).toHaveBeenLastCalledWith(
+      expect.objectContaining({ stockReservationState: 'releasing', reservationTargetStatus: 'cancelled' }),
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          status: 'cancelled',
+          paymentStatus: 'not_collectible',
+          stockReservationState: 'released',
+        }),
+        $push: { events: { $each: [
+          expect.objectContaining({ type: 'order_status_changed', to: 'cancelled' }),
+          expect.objectContaining({
+            type: 'payment_status_changed',
+            actorRole: 'admin',
+            from: 'pending_collection',
+            to: 'not_collectible',
+          }),
+        ] } },
+      }),
+      { new: true, runValidators: true },
+    )
+  })
+
+  it('records pay-on-delivery collection only after delivery with an admin audit event', async () => {
+    const deliveredOrder = {
+      ...document,
+      status: 'delivered',
+      paymentStatus: 'pending_collection' as const,
+    }
+    const collectedOrder = {
+      ...deliveredOrder,
+      paymentStatus: 'collected' as const,
+      paymentCollectedAt: new Date('2026-03-20T12:00:00.000Z'),
+    }
+    database.findOrderById.mockResolvedValue(deliveredOrder)
+    database.updateOrder.mockResolvedValue(collectedOrder)
+
+    const result = await service.recordPaymentCollection(orderId.toString(), {
+      id: '507f1f77bcf86cd799439014',
+      role: 'admin',
+    })
+
+    expect(result).toMatchObject({
+      paymentMethod: 'pay_on_delivery',
+      paymentStatus: 'collected',
+      paymentCollectedAt: collectedOrder.paymentCollectedAt,
+      totalPaise: document.totalPaise,
+    })
+    expect(database.updateOrder).toHaveBeenCalledWith(
+      { _id: orderId, status: 'delivered', paymentStatus: { $in: ['pending_collection', null] } },
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          paymentStatus: 'collected',
+          paymentCollectedAt: expect.any(Date),
+        }),
+        $push: { events: expect.objectContaining({
+          type: 'payment_status_changed',
+          actorId: new Types.ObjectId('507f1f77bcf86cd799439014'),
+          actorRole: 'admin',
+          from: 'pending_collection',
+          to: 'collected',
+        }) },
+      }),
+      { new: true, runValidators: true },
+    )
+  })
+
+  it('rejects collection before delivery and returns an already-collected order without another event', async () => {
+    await expect(service.recordPaymentCollection(orderId.toString(), {
+      id: '507f1f77bcf86cd799439014',
+      role: 'admin',
+    })).rejects.toMatchObject({ code: 'ORDER_NOT_DELIVERED' })
+    expect(database.updateOrder).not.toHaveBeenCalled()
+
+    database.findOrderById.mockResolvedValue({ ...document, paymentStatus: 'collected' })
+    const result = await service.recordPaymentCollection(orderId.toString(), {
+      id: '507f1f77bcf86cd799439014',
+      role: 'admin',
+    })
+    expect(result.paymentStatus).toBe('collected')
+    expect(database.updateOrder).not.toHaveBeenCalled()
   })
 
   it('requires an assignment before dispatch and rejects invalid delivery status changes', async () => {

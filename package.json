@@ -9,7 +9,7 @@
     "build": "vite build",
     "build:api": "npm --prefix server run build",
     "lint": "eslint src vite.config.js eslint.config.js",
-    "test:frontend": "vitest run src/delivery.test.js src/admin.test.js",
+    "test:frontend": "vitest run src/delivery.test.js src/admin.test.js src/payment-display.test.js",
     "test:api": "npm --prefix server test",
     "typecheck:api": "npm --prefix server run typecheck",
     "start:api": "npm --prefix server start",

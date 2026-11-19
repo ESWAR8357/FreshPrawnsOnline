@@ -37,3 +37,29 @@ describe('OpenAPI Phase 6 admin and order history contract', () => {
     expect(openApiSpec.paths['/api/v1/orders/{id}/events'].get.security).toEqual([{ bearerAuth: [] }])
   })
 })
+
+describe('OpenAPI pay-on-delivery contract', () => {
+  it('documents the server-owned payment state without accepting it on order creation', () => {
+    const createOrder = openApiSpec.components.schemas.CreateOrder
+    expect(createOrder.additionalProperties).toBe(false)
+    expect(createOrder.properties).not.toHaveProperty('paymentMethod')
+    expect(createOrder.properties).not.toHaveProperty('paymentStatus')
+    expect(openApiSpec.components.schemas.OrderPayment.properties.paymentStatus.enum).toEqual([
+      'pending_collection',
+      'collected',
+      'not_collectible',
+    ])
+  })
+
+  it('documents admin-only delivered-order collection with strict empty input', () => {
+    const operation = openApiSpec.paths['/api/v1/orders/{id}/payment/collection'].patch
+    expect(operation.security).toEqual([{ bearerAuth: [] }])
+    expect(operation.requestBody.content['application/json'].schema).toMatchObject({
+      type: 'object',
+      additionalProperties: false,
+    })
+    expect(operation.description).toContain('only after order delivery')
+    expect(operation.responses['200'].content['application/json'].schema.properties.data.$ref)
+      .toBe('#/components/schemas/OrderPayment')
+  })
+})

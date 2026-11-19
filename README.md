@@ -1,6 +1,6 @@
 # Fresh Prawns Online
 
-Fresh Prawns Online is a customer storefront and owner dashboard for a single-owner prawn shop serving Hyderabad. Frontend and backend are independently runnable services in this repository. Product, price, stock, account, checkout, and order-status requests use REST APIs; payments, maps, and delivery dispatch are not connected.
+Fresh Prawns Online is a customer storefront and owner dashboard for a single-owner prawn shop serving Hyderabad. Frontend and backend are independently runnable services in this repository. Product, price, stock, account, checkout, order-status, and pay-on-delivery collection records use REST APIs. No online payment, maps, or delivery dispatch provider is connected.
 
 ## Current project stack
 
@@ -17,7 +17,7 @@ The Phase 1 storefront presentation is preserved. Product, current price, prepar
 - `/checkout` requires a customer account and submits selection/address/delivery method only. The server reads current product options and daily prices, reserves available stock, and calculates the final total. Cart contents remain browser-local until order submission.
 - Admin dashboard at `/admin` requires an API-verified admin role. Orders, status updates, manual delivery assignment, product management, daily pricing, stock adjustments, and movement history use protected APIs.
 - Routes: `/`, `/shop`, `/product/:id`, `/cart`, `/account`, `/checkout`, `/track`, and `/admin`.
-- No payments, maps/location providers, delivery dispatch providers, email/SMS, or cloud image storage are connected. Delivery assignment is manual only.
+- Pay on delivery is the launch payment method. Its collection is recorded manually by an admin only after delivery; no online payment provider is connected. Maps/location providers, delivery dispatch providers, email/SMS, and cloud image storage remain disconnected. Delivery assignment is manual only.
 
 ## Local setup
 
@@ -109,6 +109,8 @@ Every `/api/v1/admin/*` endpoint requires a current database-verified admin acco
 - Successful login/register returns a short-lived access JWT in the JSON response and sets an opaque, rotating refresh token in an `HttpOnly`, `SameSite=Strict` cookie (`Secure` in production). Refresh tokens are stored only as SHA-256 hashes in MongoDB; access tokens are intended to remain in frontend memory, not local storage.
 - `POST /api/v1/auth/refresh` rotates the refresh token; reuse of a revoked token revokes its token family. `POST /api/v1/auth/logout` revokes the active refresh session. `GET /api/v1/auth/me` returns the active account.
 - `POST /api/v1/orders` requires a customer bearer token and a UUID idempotency key. It accepts product slugs, cleaned/uncleaned selection, weight (250/500/1000 g), quantity, contact/address details, and `shop` or `third_party` delivery method. Browser-supplied prices, fees, totals, roles, stock, and payment state are not accepted.
+- Every new order is assigned `paymentMethod: "pay_on_delivery"` and `paymentStatus: "pending_collection"` by the server; order placement never records payment as collected. Payment state is returned in customer/admin order details and cannot be changed through order creation.
+- `PATCH /api/v1/orders/:id/payment/collection` is admin-only and accepts an empty JSON object. The server permits only `pending_collection` to `collected` after the order reaches `delivered`, atomically stores the collection timestamp and appends a `payment_status_changed` audit event. Repeating the collection request is idempotent. Cancelling an unpaid order changes it to `not_collectible` with an audit event. Customers cannot change payment records.
 - `GET /api/v1/orders` is scoped to the signed-in customer and supports cursor pagination (`limit`, `cursor`), status filtering, and an ISO timestamp range (`from`, inclusive; `to`, exclusive). It returns `data` plus `pagination.nextCursor`; admins receive the latest 100 orders. `GET /api/v1/orders/:id` checks ownership for customers. `PATCH /api/v1/orders/:id/status` is admin-only and validates allowed status transitions on the server.
 - `GET /api/v1/orders/:id/events` returns append-only order and delivery status history to the owning customer or an admin; it does not expose actor IDs or internal notes. Status changes and their event entries are embedded in the order document and written atomically.
 - `PATCH /api/v1/orders/:id/delivery` is admin-only. It records a shop delivery person's name/contact or a manually entered third-party service label, reference, and admin-only details. `PATCH /api/v1/orders/:id/delivery/status` is admin-only and accepts only valid manual progress transitions. Customer order responses include the assigned shop contact or third-party label/reference, but omit internal delivery notes.
@@ -122,7 +124,7 @@ The backend defines a provider-neutral adapter contract for dispatch and cancell
 
 ### Phase 8 payment contract preparation
 
-The backend defines a provider-neutral payment intent/status/refund contract with integer paise, normalized payment statuses, idempotency keys, and provider-neutral retryable errors. Its deterministic in-memory fake exists only in tests; it simulates state and performs no network calls. The contract is not wired into checkout or order state, and it accepts no card details. No payment method, provider, credentials, webhook, or payment behavior is enabled.
+The backend defines a provider-neutral payment intent/status/refund contract with integer paise, normalized payment statuses, idempotency keys, and provider-neutral retryable errors. Its deterministic in-memory fake exists only in tests; it simulates state and performs no network calls. This adapter contract remains disconnected from checkout/order services and accepts no card details. The separately implemented launch method is pay on delivery; no online payment provider, credentials, webhook, or external payment behavior is enabled.
 
 ### Phase 8 notification contract preparation
 
@@ -156,7 +158,7 @@ API tests use Supertest and injected services, so focused validation runs withou
 
 The API includes environment validation, MongoDB connection lifecycle, startup index initialization, health/OpenAPI endpoints, request IDs, structured request logs with sensitive headers redacted, secure headers, allowlisted CORS, request rate limits, JSON size limits, centralized safe errors, public catalogue reads, authentication, and customer/admin order routes. Schemas and endpoints are grouped by business area under `server/src/modules/`.
 
-Product catalogue, daily pricing, stock management, order management, and manual delivery assignment use MongoDB when the configured local database is running. This is not a production-ready commerce release: there is no payment collection, provider delivery dispatch, maps, customer notification integration, or production hosting.
+Product catalogue, daily pricing, stock management, order management, manual pay-on-delivery collection records, and manual delivery assignment use MongoDB when the configured local database is running. This is not a production-ready commerce release: there is no online payment provider, provider delivery dispatch, maps, customer notification integration, or production hosting.
 
 ## MongoDB consistency
 
@@ -180,7 +182,7 @@ The Compose database is a standalone MongoDB instance, which does not support mu
 6. **Phase 6:** Admin product/pricing/stock management, append-only stock movement history, and owner-scoped order status event history.
 7. **Later phases:** Notifications, provider adapters, and production operations in small reviewed stages.
 
-Payments, maps/location, third-party delivery, email/SMS, and cloud image storage remain provider-independent future integrations. No provider has been selected or connected. Obtain explicit owner approval before creating paid accounts, adding credentials, enabling a provider, or processing live customer data. Never store card data.
+Online payments, maps/location, third-party delivery dispatch, email/SMS, and cloud image storage remain provider-independent future integrations. Pay on delivery is the current launch method; an admin can record collection only after delivery. No online provider has been selected or connected. Obtain explicit owner approval before creating paid accounts, adding credentials, enabling a provider, or processing live customer data. Never store card data.
 
 ## Deployment and secrets
 

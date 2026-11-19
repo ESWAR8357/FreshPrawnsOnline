@@ -227,14 +227,21 @@ export const openApiSpec = {
                   },
                   post: {
                     summary: 'Create an order using current server prices and stock',
-                    description: 'Accepts selections only; prices, fees, stock reservations, and totals are calculated by the server.',
+                    description: 'Accepts selections only; prices, fees, stock reservations, totals, and initial pay-on-delivery status are set by the server. New orders start as pending_collection and are never marked collected at placement.',
                     security: [{ bearerAuth: [] }],
                     requestBody: {
                       required: true,
                       content: { 'application/json': { schema: { $ref: '#/components/schemas/CreateOrder' } } },
                     },
                     responses: {
-                      '201': { description: 'Order created with server-calculated totals' },
+                      '201': {
+                        description: 'Order created with server-calculated totals and pending pay-on-delivery collection status',
+                        content: { 'application/json': { schema: {
+                          type: 'object',
+                          required: ['data'],
+                          properties: { data: { $ref: '#/components/schemas/OrderPayment' } },
+                        } } },
+                      },
                       '400': { description: 'Invalid order input' },
                       '409': { description: 'Price, preparation option, or stock is unavailable' },
                     },
@@ -246,7 +253,14 @@ export const openApiSpec = {
                     security: [{ bearerAuth: [] }],
                     parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^[a-f0-9]{24}$' } }],
                     responses: {
-                      '200': { description: 'Order details' },
+                      '200': {
+                        description: 'Order details, including server-owned payment method and collection status',
+                        content: { 'application/json': { schema: {
+                          type: 'object',
+                          required: ['data'],
+                          properties: { data: { $ref: '#/components/schemas/OrderPayment' } },
+                        } } },
+                      },
                       '404': { description: 'Order not found or not visible to this account' },
                     },
                   },
@@ -324,7 +338,34 @@ export const openApiSpec = {
                       '409': { description: 'Invalid delivery status transition' },
                     },
                   },
-                },
+    },
+    '/api/v1/orders/{id}/payment/collection': {
+      patch: {
+        summary: 'Record pay-on-delivery collection (admin only)',
+        description: 'Allowed only after order delivery. This performs the one-way pending_collection to collected transition and appends an order audit event. Repeated requests are idempotent. Customers cannot change payment records.',
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^[a-f0-9]{24}$' } }],
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { type: 'object', additionalProperties: false, properties: {} } } },
+        },
+        responses: {
+          '200': {
+            description: 'Order with paymentStatus collected and collection audit event',
+            content: { 'application/json': { schema: {
+              type: 'object',
+              required: ['data'],
+              properties: { data: { $ref: '#/components/schemas/OrderPayment' } },
+            } } },
+          },
+          '400': { description: 'Invalid request body' },
+          '401': { description: 'Authentication required' },
+          '403': { description: 'Administrator access required' },
+          '404': { description: 'Order not found' },
+          '409': { description: 'Order is not delivered or payment is not collectible' },
+        },
+      },
+    },
   },
   components: {
     securitySchemes: {
@@ -435,6 +476,16 @@ export const openApiSpec = {
             },
           },
         },
+      },
+      OrderPayment: {
+        type: 'object',
+        required: ['paymentMethod', 'paymentStatus', 'paymentCollectedAt'],
+        properties: {
+          paymentMethod: { type: 'string', const: 'pay_on_delivery' },
+          paymentStatus: { type: 'string', enum: ['pending_collection', 'collected', 'not_collectible'] },
+          paymentCollectedAt: { type: ['string', 'null'], format: 'date-time' },
+        },
+        description: 'Order data includes these server-owned payment fields; create-order requests must not include them.',
       },
       DeliveryAssignment: {
         oneOf: [

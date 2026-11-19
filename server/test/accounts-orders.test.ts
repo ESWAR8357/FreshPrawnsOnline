@@ -22,6 +22,9 @@ const createdOrder = {
   address: { line: '12 Lake View Road', locality: 'Banjara Hills', city: 'Hyderabad', postalCode: '500034' },
   status: 'pending',
   deliveryMethod: 'shop' as const,
+  paymentMethod: 'pay_on_delivery' as const,
+  paymentStatus: 'pending_collection' as const,
+  paymentCollectedAt: null,
   deliveryAssignment: {
     method: 'shop' as const,
     status: 'not_assigned',
@@ -84,6 +87,12 @@ describe('account and order authorization APIs', () => {
     updateDeliveryStatus: vi.fn(async (_id, status) => ({
       ...createdOrder,
       deliveryAssignment: { ...createdOrder.deliveryAssignment, status },
+    })),
+    recordPaymentCollection: vi.fn(async () => ({
+      ...createdOrder,
+      status: 'delivered',
+      paymentStatus: 'collected',
+      paymentCollectedAt: new Date('2026-03-20T12:00:00.000Z'),
     })),
     recoverIncompleteOperations: vi.fn(async () => {}),
   }
@@ -244,6 +253,44 @@ describe('account and order authorization APIs', () => {
     expect(response.status).toBe(201)
     expect(orders.create).toHaveBeenCalledWith(customer.id, validOrder)
     expect(response.body.data.totalPaise).toBe(42000)
+    expect(response.body.data).toMatchObject({
+      paymentMethod: 'pay_on_delivery',
+      paymentStatus: 'pending_collection',
+      paymentCollectedAt: null,
+    })
+  })
+
+  it('rejects customer-supplied payment state and allows only admins to record collection', async () => {
+    const customerToken = await bearer(customer)
+    const invalidCreate = await request(app)
+      .post('/api/v1/orders')
+      .set('Authorization', `Bearer ${customerToken}`)
+      .send({ ...validOrder, paymentMethod: 'pay_on_delivery', paymentStatus: 'collected' })
+    expect(invalidCreate.status).toBe(400)
+    expect(orders.create).not.toHaveBeenCalled()
+
+    const denied = await request(app)
+      .patch(`/api/v1/orders/${createdOrder.id}/payment/collection`)
+      .set('Authorization', `Bearer ${customerToken}`)
+      .send({})
+    expect(denied.status).toBe(403)
+    expect(orders.recordPaymentCollection).not.toHaveBeenCalled()
+
+    const adminToken = await bearer(admin)
+    const invalidBody = await request(app)
+      .patch(`/api/v1/orders/${createdOrder.id}/payment/collection`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ paymentStatus: 'collected' })
+    expect(invalidBody.status).toBe(400)
+    expect(orders.recordPaymentCollection).not.toHaveBeenCalled()
+
+    const allowed = await request(app)
+      .patch(`/api/v1/orders/${createdOrder.id}/payment/collection`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({})
+    expect(allowed.status).toBe(200)
+    expect(allowed.body.data).toMatchObject({ paymentStatus: 'collected' })
+    expect(orders.recordPaymentCollection).toHaveBeenCalledWith(createdOrder.id, { id: admin.id, role: 'admin' })
   })
 
   it('denies customer order-status changes and allows an authenticated admin', async () => {

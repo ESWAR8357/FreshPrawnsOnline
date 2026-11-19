@@ -35,6 +35,12 @@ function assertEventCapacity(order: { events?: unknown[] }) {
   }
 }
 
+function assertAdditionalEventCapacity(order: { events?: unknown[] }, count: number) {
+  if ((order.events?.length ?? 0) + count > MAX_ORDER_EVENTS) {
+    throw new HttpError(409, 'ORDER_EVENT_LIMIT_REACHED', 'This order has reached its event history limit')
+  }
+}
+
 export function calculateOrderLineTotalPaise(
   pricePerKgPaise: number,
   preparationFeePaise: number,
@@ -58,6 +64,9 @@ type OrderRecord = {
   stockReservationState: string
   reservationTargetStatus?: string | null
   deliveryMethod: 'shop' | 'third_party'
+  paymentMethod?: 'pay_on_delivery'
+  paymentStatus?: 'pending_collection' | 'collected' | 'not_collectible'
+  paymentCollectedAt?: Date | null
   deliveryAssignment?: {
     method: 'shop' | 'third_party'
     status: 'not_assigned' | 'assigned' | 'picked_up' | 'in_transit' | 'exception' | 'delivered' | 'cancelled'
@@ -90,6 +99,9 @@ type PublicOrder = {
   address: { line: string; locality: string; city: string; postalCode: string }
   status: string
   deliveryMethod: 'shop' | 'third_party'
+  paymentMethod: 'pay_on_delivery'
+  paymentStatus: 'pending_collection' | 'collected' | 'not_collectible'
+  paymentCollectedAt: Date | null
   deliveryAssignment: {
     method: 'shop' | 'third_party'
     status: string
@@ -178,6 +190,9 @@ export function publicOrder(order: OrderRecord, includeInternalDeliveryDetails =
     status: order.status,
     deliveryMethod: deliveryAssignment.method,
     deliveryAssignment,
+    paymentMethod: 'pay_on_delivery',
+    paymentStatus: order.paymentStatus ?? 'pending_collection',
+    paymentCollectedAt: order.paymentCollectedAt ?? null,
     items: order.items.map((item) => ({
       productName: item.productName,
       preparation: item.preparation,
@@ -210,6 +225,7 @@ export interface OrdersService {
   updateStatus(orderId: string, status: string, actor?: OrderEventActor): Promise<PublicOrder>
   assignDelivery(orderId: string, input: DeliveryAssignmentInput, actor?: OrderEventActor): Promise<PublicOrder>
   updateDeliveryStatus(orderId: string, status: string, actor?: OrderEventActor): Promise<PublicOrder>
+  recordPaymentCollection(orderId: string, actor: OrderEventActor): Promise<PublicOrder>
   recoverIncompleteOperations(): Promise<void>
 }
 
@@ -316,6 +332,9 @@ export class MongoOrdersService implements OrdersService {
         stockReservationState: 'reserving',
         deliveryMethod: input.deliveryMethod,
         deliveryAssignment: { method: input.deliveryMethod, status: 'not_assigned' },
+        paymentMethod: 'pay_on_delivery',
+        paymentStatus: 'pending_collection',
+        paymentCollectedAt: null,
         items,
         subtotalPaise,
         deliveryFeePaise,
@@ -423,7 +442,12 @@ export class MongoOrdersService implements OrdersService {
     let current = await Order.findById(orderId)
     if (!current) throw new HttpError(404, 'ORDER_NOT_FOUND', 'Order not found')
     if (current.status === status) return publicOrder(current)
-    assertEventCapacity(current)
+    const currentPaymentStatus = current.paymentStatus ?? 'pending_collection'
+    if (status === 'cancelled' && currentPaymentStatus === 'pending_collection') {
+      assertAdditionalEventCapacity(current, 2)
+    } else {
+      assertEventCapacity(current)
+    }
     const allowed: Record<string, string[]> = {
       pending: ['confirmed', 'cancelled'],
       confirmed: ['preparing', 'cancelled'],
@@ -443,6 +467,28 @@ export class MongoOrdersService implements OrdersService {
       throw new HttpError(409, 'DELIVERY_NOT_IN_TRANSIT', 'Delivery must be in transit before completing the order')
     }
 
+    const orderStatusEvent = {
+      type: 'order_status_changed',
+      actorId: actor.id ? new Types.ObjectId(actor.id) : null,
+      actorRole: actor.role,
+      from: current.status,
+      to: status,
+      createdAt: new Date(),
+    }
+    const terminalEvents = status === 'cancelled' && currentPaymentStatus === 'pending_collection'
+      ? [
+          orderStatusEvent,
+          {
+            type: 'payment_status_changed',
+            actorId: actor.id ? new Types.ObjectId(actor.id) : null,
+            actorRole: actor.role,
+            from: 'pending_collection',
+            to: 'not_collectible',
+            createdAt: new Date(),
+          },
+        ]
+      : [orderStatusEvent]
+
     if (status !== 'cancelled' && status !== 'delivered') {
       const updated = await Order.findOneAndUpdate(
         { _id: current._id, status: current.status, stockReservationState: 'reserved' },
@@ -451,16 +497,7 @@ export class MongoOrdersService implements OrdersService {
           status,
           ...(status === 'out_for_delivery' ? { 'deliveryAssignment.status': 'in_transit' } : {}),
           },
-          $push: {
-            events: {
-              type: 'order_status_changed',
-              actorId: actor.id ? new Types.ObjectId(actor.id) : null,
-              actorRole: actor.role,
-              from: current.status,
-              to: status,
-              createdAt: new Date(),
-            },
-          },
+          $push: { events: orderStatusEvent },
         },
         { new: true, runValidators: true },
       )
@@ -501,20 +538,14 @@ export class MongoOrdersService implements OrdersService {
         $set: {
           status,
           stockReservationState: finalState,
+          ...(status === 'cancelled' && currentPaymentStatus === 'pending_collection'
+            ? { paymentStatus: 'not_collectible' }
+            : {}),
           ...(current.deliveryAssignment
             ? { 'deliveryAssignment.status': status === 'cancelled' ? 'cancelled' : 'delivered' }
             : {}),
         },
-        $push: {
-          events: {
-            type: 'order_status_changed',
-            actorId: actor.id ? new Types.ObjectId(actor.id) : null,
-            actorRole: actor.role,
-            from: current.status,
-            to: status,
-            createdAt: new Date(),
-          },
-        },
+        $push: { events: { $each: terminalEvents } },
         $unset: { reservationTargetStatus: 1 },
       },
       { new: true, runValidators: true },
@@ -525,6 +556,42 @@ export class MongoOrdersService implements OrdersService {
       throw new HttpError(409, 'ORDER_STATUS_CHANGED', 'Order stock changed; reload and reconcile before retrying')
     }
     return publicOrder(updated, true)
+  }
+
+  async recordPaymentCollection(orderId: string, actor: OrderEventActor) {
+    const current = await Order.findById(orderId)
+    if (!current) throw new HttpError(404, 'ORDER_NOT_FOUND', 'Order not found')
+    if (current.paymentStatus === 'collected') return publicOrder(current, true)
+    if (current.status !== 'delivered') {
+      throw new HttpError(409, 'ORDER_NOT_DELIVERED', 'Payment can be recorded only after the order is delivered')
+    }
+    if ((current.paymentStatus ?? 'pending_collection') !== 'pending_collection') {
+      throw new HttpError(409, 'PAYMENT_NOT_COLLECTIBLE', 'This order has no payment awaiting collection')
+    }
+    assertEventCapacity(current)
+    const collectedAt = new Date()
+    const updated = await Order.findOneAndUpdate(
+      { _id: current._id, status: 'delivered', paymentStatus: { $in: ['pending_collection', null] } },
+      {
+        $set: { paymentStatus: 'collected', paymentCollectedAt: collectedAt },
+        $push: {
+          events: {
+            type: 'payment_status_changed',
+            actorId: new Types.ObjectId(actor.id),
+            actorRole: 'admin',
+            from: 'pending_collection',
+            to: 'collected',
+            createdAt: collectedAt,
+          },
+        },
+      },
+      { new: true, runValidators: true },
+    )
+    if (updated) return publicOrder(updated, true)
+    const latest = await Order.findById(orderId)
+    if (!latest) throw new HttpError(404, 'ORDER_NOT_FOUND', 'Order not found')
+    if (latest.paymentStatus === 'collected') return publicOrder(latest, true)
+    throw new HttpError(409, 'PAYMENT_COLLECTION_CHANGED', 'Payment status changed; reload and try again')
   }
 
   async assignDelivery(orderId: string, input: DeliveryAssignmentInput, actor: OrderEventActor = { id: '', role: 'system' }) {

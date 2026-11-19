@@ -151,4 +151,29 @@ describe('foundation model validation and indexes', () => {
     expect(order.validateSync()).toBeUndefined()
     expect(order.events[0].type).toBe('order_status_changed')
   })
+
+  it('defaults orders to unpaid pay-on-delivery and constrains collection events', () => {
+    const order = new Order({
+      customerUserId: '507f1f77bcf86cd799439011',
+      customerName: 'Ananya Rao',
+      customerPhone: '+919876543210',
+      address: { line: '12 Lake View Road', locality: 'Banjara Hills', city: 'Hyderabad', postalCode: '500034' },
+      deliveryMethod: 'shop',
+      items: [{ productId: '507f1f77bcf86cd799439013', productName: 'White Prawns', preparation: 'cleaned', weightGrams: 500, quantity: 1, pricePerKgPaise: 68000, preparationFeePaise: 0, lineTotalPaise: 34000 }],
+      subtotalPaise: 34000,
+      deliveryFeePaise: 4000,
+      totalPaise: 38000,
+      idempotencyKey: 'key',
+      requestFingerprint: 'fingerprint',
+    })
+
+    expect(order.paymentMethod).toBe('pay_on_delivery')
+    expect(order.paymentStatus).toBe('pending_collection')
+    expect(order.paymentCollectedAt).toBeNull()
+    expect(order.validateSync()).toBeUndefined()
+    order.paymentStatus = 'collected'
+    expect(order.validateSync()).toBeUndefined()
+    order.paymentStatus = 'paid'
+    expect(order.validateSync()?.errors.paymentStatus).toBeDefined()
+  })
 })

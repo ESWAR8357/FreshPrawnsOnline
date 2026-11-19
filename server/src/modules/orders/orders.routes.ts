@@ -46,6 +46,7 @@ const deliveryAssignmentSchema = z.discriminatedUnion('method', [
 const deliveryStatusSchema = z.object({
   status: z.enum(['assigned', 'picked_up', 'in_transit', 'exception']),
 }).strict()
+const paymentCollectionSchema = z.object({}).strict()
 const orderListSchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).default(20),
   cursor: z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/).optional(),
@@ -205,6 +206,21 @@ export function createOrdersRouter(service: OrdersService, authenticate: Request
     }
     try {
       const order = await service.updateDeliveryStatus(id.data, body.data.status, adminActor(request))
+      response.json({ data: order })
+    } catch (error) {
+      next(error)
+    }
+  })
+
+  router.patch('/:id/payment/collection', requireAdmin, async (request, response, next) => {
+    const id = orderIdSchema.safeParse(request.params.id)
+    const body = paymentCollectionSchema.safeParse(request.body)
+    if (!id.success || !body.success) {
+      invalidRequest(response, !id.success ? id.error.issues : body.success ? [] : body.error.issues)
+      return
+    }
+    try {
+      const order = await service.recordPaymentCollection(id.data, adminActor(request))
       response.json({ data: order })
     } catch (error) {
       next(error)
