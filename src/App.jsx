@@ -14,6 +14,26 @@ const apiBase = import.meta.env.VITE_API_BASE_URL || ''
 let latestAccessToken = ''
 let authStateUpdater = () => {}
 let refreshInFlight = null
+function refreshSession() {
+  if (!refreshInFlight) {
+    refreshInFlight = fetch(`${apiBase}/api/v1/auth/refresh`, { method: 'POST', credentials: 'include' })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => null)
+        if (!response.ok || !payload?.data?.accessToken) {
+          if (response.status === 401) {
+            latestAccessToken = ''
+            authStateUpdater(null)
+          }
+          throw new Error(payload?.error?.message || `Session refresh failed (${response.status}).`)
+        }
+        latestAccessToken = payload.data.accessToken
+        authStateUpdater(payload.data)
+        return payload.data
+      })
+      .finally(() => { refreshInFlight = null })
+  }
+  return refreshInFlight
+}
 const money = (amount) => `₹${Math.round(amount).toLocaleString('en-IN')}`
 const deliveryFee = 40
 const formatWeight = (grams) => grams >= 1000
@@ -30,24 +50,8 @@ async function apiRequest(path, { token, ...options } = {}) {
   const initialToken = latestAccessToken || token
   let response = await requestWithToken(initialToken)
   if (response.status === 401 && initialToken && path !== '/api/v1/auth/refresh') {
-    if (!refreshInFlight) {
-      refreshInFlight = fetch(`${apiBase}/api/v1/auth/refresh`, { method: 'POST', credentials: 'include' })
-        .then(async (refreshResponse) => {
-          const refreshPayload = await refreshResponse.json().catch(() => null)
-          if (!refreshResponse.ok || !refreshPayload?.data?.accessToken) {
-            if (refreshResponse.status === 401) {
-              latestAccessToken = ''
-              authStateUpdater(null)
-            }
-            throw new Error(refreshPayload?.error?.message || `Session refresh failed (${refreshResponse.status}).`)
-          }
-          latestAccessToken = refreshPayload.data.accessToken
-          authStateUpdater(refreshPayload.data)
-          return latestAccessToken
-        })
-        .finally(() => { refreshInFlight = null })
-    }
-    response = await requestWithToken(await refreshInFlight)
+    const refreshed = await refreshSession()
+    response = await requestWithToken(refreshed.accessToken)
   }
   const payload = await response.json().catch(() => null)
   if (!response.ok) throw new Error(payload?.error?.message || `Request failed (${response.status}).`)
@@ -165,17 +169,13 @@ function App() {
 
   useEffect(() => {
     let active = true
-    apiRequest('/api/v1/auth/refresh', { method: 'POST' })
-      .then(({ data }) => {
+    refreshSession()
+      .then(() => {
         if (!active) return
-        latestAccessToken = data.accessToken
-        authStateUpdater(data)
         setAuthStatus('ready')
       })
       .catch(() => {
         if (!active) return
-        latestAccessToken = ''
-        authStateUpdater(null)
         setAuthStatus('ready')
       })
     return () => { active = false }
@@ -557,31 +557,47 @@ function TrackPage({ order, authToken }) {
   const orderId = searchParams.get('order')
   const [loadedOrder, setLoadedOrder] = useState(null)
   const [eventsState, setEventsState] = useState({ orderId: '', events: [], error: '' })
+  const trackedOrderId = hasSearched ? foundOrder?.orderId : (orderId || order?.orderId)
   useEffect(() => {
-    if (!orderId || !authToken) return undefined
+    if (!trackedOrderId || !authToken) return undefined
     let active = true
-    apiRequest(`/api/v1/orders/${encodeURIComponent(orderId)}`, { token: authToken })
-      .then(({ data }) => {
+    let inFlight = false
+    const refreshOrder = async () => {
+      if (!active || inFlight || document.visibilityState !== 'visible') return
+      inFlight = true
+      try {
+        const encodedId = encodeURIComponent(trackedOrderId)
+        const [{ data: orderData }, { data: events }] = await Promise.all([
+          apiRequest(`/api/v1/orders/${encodedId}`, { token: authToken }),
+          apiRequest(`/api/v1/orders/${encodedId}/events`, { token: authToken }),
+        ])
         if (!active) return
-        setLoadedOrder(toCustomerOrder(data))
-      })
-      .catch((error) => { if (active) setLookupError(error.message || 'Could not load this order.') })
-    return () => { active = false }
-  }, [orderId, authToken])
-  const shownOrder = hasSearched ? foundOrder : (order?.orderId === orderId ? order : loadedOrder || order)
-  useEffect(() => {
-    if (!shownOrder?.orderId || !authToken) {
-      return undefined
+        setLoadedOrder(toCustomerOrder(orderData))
+        setEventsState({ orderId: trackedOrderId, events, error: '' })
+      } catch (error) {
+        if (!active) return
+        setEventsState((previous) => ({
+          orderId: trackedOrderId,
+          events: previous.orderId === trackedOrderId ? previous.events : [],
+          error: error.message || 'Could not refresh order updates.',
+        }))
+      } finally {
+        inFlight = false
+      }
     }
-    let active = true
-    apiRequest(`/api/v1/orders/${encodeURIComponent(shownOrder.orderId)}/events`, { token: authToken })
-      .then(({ data }) => {
-        if (!active) return
-        setEventsState({ orderId: shownOrder.orderId, events: data, error: '' })
-      })
-      .catch((error) => { if (active) setEventsState({ orderId: shownOrder.orderId, events: [], error: error.message || 'Could not load order history.' }) })
-    return () => { active = false }
-  }, [shownOrder?.orderId, authToken])
+    const timer = window.setInterval(refreshOrder, 15000)
+    const onVisibilityChange = () => { if (document.visibilityState === 'visible') refreshOrder() }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    refreshOrder()
+    return () => {
+      active = false
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [trackedOrderId, authToken])
+  const shownOrder = hasSearched
+    ? (loadedOrder?.orderId === trackedOrderId ? loadedOrder : foundOrder)
+    : (loadedOrder?.orderId === trackedOrderId ? loadedOrder : order?.orderId === trackedOrderId ? order : loadedOrder || order)
   const orderEvents = eventsState.orderId === shownOrder?.orderId ? eventsState.events : []
   const eventsError = eventsState.orderId === shownOrder?.orderId ? eventsState.error : ''
   const searchOrders = async (event) => {
@@ -615,7 +631,7 @@ function TrackPage({ order, authToken }) {
   return <main className="page-main tracking-page"><div className="eyebrow">A LITTLE PEACE OF MIND</div><h1 className="page-heading">Track your order</h1><p className="tracking-intro">We'll keep you in the loop, from our counter to your door.</p>
     <form className="tracking-search" onSubmit={searchOrders}><label htmlFor="order-lookup">Order number</label><div><input id="order-lookup" value={lookup} onChange={(event) => setLookup(event.target.value)} placeholder="e.g. FP-123456" /><button className="button button-dark" type="submit" disabled={lookupBusy}>{lookupBusy ? 'Searching…' : 'Find order'} <ArrowRight size={16} /></button></div><small>Search uses orders linked to your signed-in account.</small></form>
     {lookupError && <p className="form-error" role="alert">{lookupError}</p>}
-    {shownOrder ? <section className="tracking-card"><div className="tracking-card-head"><div><span className="status-pill"><i /> {shownOrder.status === 'pending' ? 'Order received' : shownOrder.status}</span><h2>Order {shownOrder.id}</h2><p>Placed {shownOrder.createdAt}</p></div><strong>{money(shownOrder.total)}</strong></div><div className="tracking-steps">{steps.map((step, index) => <div className={`tracking-step ${index <= stage ? 'completed' : ''}`} key={step}><span className="tracking-step-icon">{index <= stage ? <Check size={15} /> : index === 1 ? <Fish size={15} /> : index === 2 ? <Truck size={15} /> : <PackageCheck size={15} />}</span><b>{step}</b>{index < steps.length - 1 && <span className="tracking-step-line" />}</div>)}</div><div className="tracking-order-meta"><div><MapPin size={16} /><span><b>Delivering to</b><small>{shownOrder.address || 'Hyderabad'}</small></span></div><div><Truck size={16} /><span><b>Delivery method</b><small>{shownOrder.deliveryMethod === 'partner' ? 'Third-party service' : 'Our delivery person'}</small></span></div><div><PackageCheck size={16} /><span><b>Delivery status</b><small>{deliveryStatusLabel(shownOrder.delivery?.status)}</small></span></div><div><Banknote size={16} /><span><b>Payment</b><small>{shownOrder.paymentMethodLabel} · {shownOrder.paymentStatusLabel}</small></span></div>{shownOrder.delivery?.method === 'shop' && shownOrder.delivery.personName && <div><Headset size={16} /><span><b>Delivery contact</b><small>{shownOrder.delivery.personName}{shownOrder.delivery.personPhone ? ` · ${shownOrder.delivery.personPhone}` : ''}</small></span></div>}{shownOrder.delivery?.method === 'third_party' && (shownOrder.delivery.serviceName || shownOrder.delivery.reference) && <div><PackageCheck size={16} /><span><b>Delivery reference</b><small>{[shownOrder.delivery.serviceName, shownOrder.delivery.reference].filter(Boolean).join(' · ')}</small></span></div>}</div><section className="order-event-history" aria-labelledby="customer-order-history"><h3 id="customer-order-history">Order updates</h3>{eventsError && <p className="form-error" role="alert">{eventsError}</p>}{orderEvents.length ? <ol>{orderEvents.map((item) => <li key={item.id}><b>{item.type.replaceAll('_', ' ')}</b><small>{item.from && item.to ? `${item.from.replaceAll('_', ' ')} → ${item.to.replaceAll('_', ' ')}` : item.to?.replaceAll('_', ' ')}</small><time dateTime={item.createdAt}>{new Date(item.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</time></li>)}</ol> : !eventsError && <p>No updates recorded yet.</p>}</section><p className="tracking-demo">Order and manual delivery updates are loaded from the API. Live location and provider updates are not connected.</p></section> : <div className="tracking-empty"><div className="tracking-empty-icon"><PackageCheck size={29} /></div><h2>No order to show just yet</h2><p>Place an order while signed in, or search for an order linked to your account.</p><Link to="/shop" className="text-link">Browse fresh prawns <ArrowRight size={16} /></Link></div>}
+    {shownOrder ? <section className="tracking-card"><div className="tracking-card-head"><div><span className="status-pill"><i /> {shownOrder.status === 'pending' ? 'Order received' : shownOrder.status}</span><h2>Order {shownOrder.id}</h2><p>Placed {shownOrder.createdAt}</p></div><strong>{money(shownOrder.total)}</strong></div><div className="tracking-steps">{steps.map((step, index) => <div className={`tracking-step ${index <= stage ? 'completed' : ''}`} key={step}><span className="tracking-step-icon">{index <= stage ? <Check size={15} /> : index === 1 ? <Fish size={15} /> : index === 2 ? <Truck size={15} /> : <PackageCheck size={15} />}</span><b>{step}</b>{index < steps.length - 1 && <span className="tracking-step-line" />}</div>)}</div><div className="tracking-order-meta"><div><MapPin size={16} /><span><b>Delivering to</b><small>{shownOrder.address || 'Hyderabad'}</small></span></div><div><Truck size={16} /><span><b>Delivery method</b><small>{shownOrder.deliveryMethod === 'partner' ? 'Third-party service' : 'Our delivery person'}</small></span></div><div><PackageCheck size={16} /><span><b>Delivery status</b><small>{deliveryStatusLabel(shownOrder.delivery?.status)}</small></span></div><div><Banknote size={16} /><span><b>Payment</b><small>{shownOrder.paymentMethodLabel} · {shownOrder.paymentStatusLabel}</small></span></div>{shownOrder.delivery?.method === 'shop' && shownOrder.delivery.personName && <div><Headset size={16} /><span><b>Delivery contact</b><small>{shownOrder.delivery.personName}{shownOrder.delivery.personPhone ? ` · ${shownOrder.delivery.personPhone}` : ''}</small></span></div>}{shownOrder.delivery?.method === 'third_party' && (shownOrder.delivery.serviceName || shownOrder.delivery.reference) && <div><PackageCheck size={16} /><span><b>Delivery reference</b><small>{[shownOrder.delivery.serviceName, shownOrder.delivery.reference].filter(Boolean).join(' · ')}</small></span></div>}</div><section className="order-event-history" aria-labelledby="customer-order-history"><h3 id="customer-order-history">Order updates</h3>{eventsError && <p className="form-error" role="alert">{eventsError}</p>}{orderEvents.length ? <ol>{orderEvents.map((item) => <li key={item.id}><b>{item.type.replaceAll('_', ' ')}</b><small>{item.from && item.to ? `${item.from.replaceAll('_', ' ')} → ${item.to.replaceAll('_', ' ')}` : item.to?.replaceAll('_', ' ')}</small><time dateTime={item.createdAt}>{new Date(item.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</time></li>)}</ol> : !eventsError && <p>No updates recorded yet.</p>}</section><p className="tracking-demo">Order status and history refresh automatically about every 15 seconds while this page is open.</p></section> : <div className="tracking-empty"><div className="tracking-empty-icon"><PackageCheck size={29} /></div><h2>No order to show just yet</h2><p>Place an order while signed in, or search for an order linked to your account.</p><Link to="/shop" className="text-link">Browse fresh prawns <ArrowRight size={16} /></Link></div>}
     <div className="tracking-support"><Headset size={18} /><span>Need a hand? <a href="tel:+914040001234">Call our shop at +91 40 4000 1234</a></span></div>
   </main>
 }
@@ -640,21 +656,35 @@ function AdminPage({ products, catalogueStatus, catalogueError, onRetry, current
   useEffect(() => {
     if (currentUser?.role !== 'admin' || !authToken) return undefined
     let active = true
-    apiRequest('/api/v1/orders', { token: authToken })
-      .then(({ data }) => {
+    let inFlight = false
+    const refreshOrders = async () => {
+      if (!active || inFlight || document.visibilityState !== 'visible') return
+      inFlight = true
+      try {
+        const { data } = await apiRequest('/api/v1/orders', { token: authToken })
         if (!active) return
         const mapped = data.map(toAdminOrder)
         setOrders(mapped)
-        setSelectedOrder((previous) => mapped.find((order) => order.rawId === previous?.rawId) || mapped[0] || null)
+        setSelectedOrder((previous) => mapped.find((item) => item.rawId === previous?.rawId) || mapped[0] || null)
         setOrdersStatus(mapped.length ? 'ready' : 'empty')
         setOrdersError('')
-      })
-      .catch((error) => {
+      } catch (error) {
         if (!active) return
         setOrdersError(error.message || 'Could not load orders.')
         setOrdersStatus('error')
-      })
-    return () => { active = false }
+      } finally {
+        inFlight = false
+      }
+    }
+    const timer = window.setInterval(refreshOrders, 15000)
+    const onVisibilityChange = () => { if (document.visibilityState === 'visible') refreshOrders() }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    refreshOrders()
+    return () => {
+      active = false
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
   }, [currentUser, authToken, ordersRetry])
 
   const updateOrder = async (displayId, patch) => {

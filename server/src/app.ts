@@ -94,12 +94,7 @@ export function buildApp(
     refreshTtlDays: config.REFRESH_TOKEN_TTL_DAYS,
   })
   const authenticate = createAuthenticationMiddleware(config.JWT_ACCESS_SECRET, authService)
-  app.use('/api/v1/auth', rateLimit({
-    windowMs: 900000,
-    limit: 10,
-    standardHeaders: 'draft-8',
-    legacyHeaders: false,
-  }), createAuthRouter(authService, config, authenticate))
+  app.use('/api/v1/auth', createAuthRouter(authService, config, authenticate))
   app.use('/api/v1/orders', createOrdersRouter(services.orders ?? new MongoOrdersService(), authenticate))
   app.use('/api/v1/admin', createAdminCatalogueRouter(authenticate, services.adminCatalogue))
   app.use('/api/v1/admin/stock', createAdminStockRouter(authenticate, services.adminStock))

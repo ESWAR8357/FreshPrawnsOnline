@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import type { RequestHandler, Response } from 'express'
+import { rateLimit } from 'express-rate-limit'
 import { z } from 'zod'
 import { HttpError } from '../../http-error.js'
 import type { ServerConfig } from '../../config.js'
@@ -12,6 +13,15 @@ const credentialsSchema = z.object({
 }).strict()
 
 const cookieName = 'freshprawns_refresh'
+const credentialRateLimit = rateLimit({
+  windowMs: 900000,
+  limit: 10,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  handler: (_request, response) => {
+    response.status(429).json({ error: { code: 'RATE_LIMITED', message: 'Too many sign-in attempts. Try again later.' } })
+  },
+})
 
 function getRefreshToken(cookieHeader: string | undefined): string | null {
   const entry = cookieHeader?.split(';').map((part) => part.trim())
@@ -54,7 +64,7 @@ export function createAuthRouter(service: AuthService, config: ServerConfig, aut
   })
 
   for (const [path, action] of [['register', 'register'], ['login', 'login']] as const) {
-    router.post(`/${path}`, async (request, response, next) => {
+    router.post(`/${path}`, credentialRateLimit, async (request, response, next) => {
       const parsed = credentialsSchema.safeParse(request.body)
       if (!parsed.success) {
         validationError(response, parsed.error)
