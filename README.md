@@ -120,6 +120,24 @@ Every `/api/v1/admin/*` endpoint requires a current database-verified admin acco
 
 The backend defines a provider-neutral adapter contract for dispatch and cancellation with normalized statuses and idempotency keys. A repeated operation with the same key and input must replay its original result; reusing a key for changed input must fail. Provider-neutral errors indicate retryability and whether manual fallback is available, recommended, or required. A fake adapter is defined only in tests and performs no network calls. This contract is not connected to the order routes or manual assignment workflow: manual assignment remains the live default and fallback. No provider, provider-specific data fields, credentials, or external data sharing are configured. Select and approve a provider and its data-sharing/account requirements before implementing a production adapter.
 
+### Phase 8 payment contract preparation
+
+The backend defines a provider-neutral payment intent/status/refund contract with integer paise, normalized payment statuses, idempotency keys, and provider-neutral retryable errors. Its deterministic in-memory fake exists only in tests; it simulates state and performs no network calls. The contract is not wired into checkout or order state, and it accepts no card details. No payment method, provider, credentials, webhook, or payment behavior is enabled.
+
+### Phase 8 notification contract preparation
+
+The backend defines a provider-neutral email/SMS notification contract with opaque recipient references, template keys, bounded explicitly supplied variables, normalized delivery outcomes, and idempotent sends. The contract does not identify a safe variable allowlist; any future sender must apply event-specific allowlists, consent, and opt-out policy. A deterministic recording fake exists only in tests and sends nothing. There is no notification route, queue, sender, or startup wiring; customer data is not sent externally.
+
+### Phase 8 maps/location contract preparation
+
+The backend defines a provider-neutral address geocoding contract with normalized found/ambiguous/not-found outcomes and optional precision-labeled coordinates. A deterministic test-only fake uses synthetic fixtures and makes no external lookup. The contract is not connected to checkout, address validation, browser geolocation, or tracking; addresses and coordinates are not sent externally or persisted by this slice.
+
+### Phase 8 image storage contract preparation
+
+The backend defines a provider-neutral metadata/reference lookup and deletion contract with opaque object keys and normalized image content types. A deterministic in-memory fake uses a synthetic metadata fixture and stores no image bytes. In keeping with the no-upload scope, this contract has no write/upload method, route, or startup wiring; accepting image files and selecting storage/access/retention policy require separate owner approval.
+
+All four Phase 8 provider-independent contracts are preparation only. They are not imported by the application, and normal startup does not instantiate them. The storefront, checkout, order state, notification behavior, address flow, and product images therefore remain unchanged.
+
 ## Checks
 
 ```powershell
