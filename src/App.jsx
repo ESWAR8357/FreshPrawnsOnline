@@ -527,10 +527,10 @@ function AccountPage({ currentUser, authStatus, onAuthenticated, onSignOut }) {
         buttonContainer.replaceChildren()
         google.accounts.id.renderButton(buttonContainer, {
           theme: 'outline',
-          size: 'medium',
+          size: 'small',
           shape: 'rectangular',
           text: mode === 'register' ? 'signup_with' : 'signin_with',
-          width: Math.min(260, buttonContainer.clientWidth || 260),
+          width: Math.min(220, buttonContainer.clientWidth || 220),
         })
       })
       .catch((loadError) => { if (active) setError(loadError.message || 'Google sign-in could not be loaded.') })
