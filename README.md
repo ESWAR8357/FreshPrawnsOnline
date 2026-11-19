@@ -116,6 +116,10 @@ Every `/api/v1/admin/*` endpoint requires a current database-verified admin acco
 - Delivery fees are currently explicit Phase 1 server demo values (₹40 for shop delivery and ₹60 for third-party method); confirm the owner's final fee/area rules before treating these values as business policy. The third-party option records a preference only and does not dispatch a provider.
 - Authentication routes have an additional 10-request/15-minute rate limit. All private API responses use `Cache-Control: no-store`; protected routes verify the current user/role from MongoDB on each request.
 
+### Provider-independent delivery adapter preparation
+
+The backend defines a provider-neutral adapter contract for dispatch and cancellation with normalized statuses and idempotency keys. A repeated operation with the same key and input must replay its original result; reusing a key for changed input must fail. Provider-neutral errors indicate retryability and whether manual fallback is available, recommended, or required. A fake adapter is defined only in tests and performs no network calls. This contract is not connected to the order routes or manual assignment workflow: manual assignment remains the live default and fallback. No provider, provider-specific data fields, credentials, or external data sharing are configured. Select and approve a provider and its data-sharing/account requirements before implementing a production adapter.
+
 ## Checks
 
 ```powershell
