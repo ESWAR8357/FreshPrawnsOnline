@@ -1,7 +1,7 @@
 import { Component, useEffect, useRef, useState } from 'react'
 import { BrowserRouter, Link, NavLink, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
-  ArrowDownRight, ArrowLeft, ArrowRight, BadgeCheck, Banknote, Check, Clock3,
+  ArrowLeft, ArrowRight, BadgeCheck, Banknote, Check, Clock3,
   Fish, Headset, MapPin, Menu, Minus, PackageCheck, Plus, Search, ShoppingBag, SlidersHorizontal,
   Sparkles, Truck, X,
 } from 'lucide-react'
@@ -230,7 +230,7 @@ function App() {
       .catch((error) => {
         if (error.name === 'AbortError') return
         setCatalogueError(error instanceof TypeError
-          ? 'Could not reach the product service. Check that the API and MongoDB are running, then try again.'
+          ? 'We could not load the catalogue. Check your connection and try again.'
           : error.message || 'The product catalogue is temporarily unavailable.')
         setCatalogueStatus('error')
       })
@@ -251,7 +251,7 @@ function App() {
       || !option?.enabled
       || product.availableGrams < weight * quantity
     ) {
-      setToast({ message: 'This selection is no longer available' })
+      setToast({ message: 'This selection is no longer available', showCartLink: false })
       return
     }
     const key = `${product.id}-${cleaned ? 'cleaned' : 'whole'}-${weight}`
@@ -260,7 +260,7 @@ function App() {
       if (found) return items.map((item) => item.key === key ? { ...item, quantity: item.quantity + quantity } : item)
       return [...items, { key, productId: product.id, cleaned, weight, quantity }]
     })
-    setToast({ message: `${product.name} added to cart` })
+    setToast({ message: `${product.name} added to cart`, showCartLink: true })
   }
 
   const updateQuantity = (key, change) => setCart((items) => items
@@ -292,14 +292,13 @@ function App() {
       latestAccessToken = ''
       authStateUpdater(null)
     } catch (error) {
-      setToast({ message: error.message || 'Could not sign out. Please try again.' })
+      setToast({ message: error.message || 'Could not sign out. Please try again.', showCartLink: false })
     }
   }
 
   return (
     <BrowserRouter>
       <div className="app-shell min-h-screen">
-        <Announcement />
         <Header cartCount={cartCount} menuOpen={menuOpen} setMenuOpen={setMenuOpen} currentUser={currentUser} />
         <ErrorBoundary>
           <Routes>
@@ -315,14 +314,10 @@ function App() {
           </Routes>
         </ErrorBoundary>
         <Footer />
-        {toast && <div className="cart-toast" role="status" aria-live="polite"><span className="cart-toast-check"><Check size={16} /></span><span>{toast.message}</span><Link to="/cart" onClick={() => setToast(null)}>View cart</Link><button type="button" aria-label="Dismiss notification" onClick={() => setToast(null)}><X size={16} /></button></div>}
+        {toast && <div className="cart-toast" role="status" aria-live="polite"><span className="cart-toast-check"><Check size={16} /></span><span>{toast.message}</span>{toast.showCartLink && <Link to="/cart" onClick={() => setToast(null)}>View cart</Link>}<button type="button" aria-label="Dismiss notification" onClick={() => setToast(null)}><X size={16} /></button></div>}
       </div>
     </BrowserRouter>
   )
-}
-
-function Announcement() {
-  return <div className="announcement"><span><Sparkles size={14} /> Fresh catch, delivered with care</span><span className="announcement-location"><MapPin size={13} /> Hyderabad only</span></div>
 }
 
 function Header({ cartCount, menuOpen, setMenuOpen, currentUser }) {
@@ -352,35 +347,54 @@ function Header({ cartCount, menuOpen, setMenuOpen, currentUser }) {
 }
 
 function HomePage({ products, catalogueStatus, catalogueError, onRetry, onAdd }) {
+  const navigate = useNavigate()
+  const [search, setSearch] = useState('')
   const featured = products.filter((product) => product.active).slice(0, 3)
+  const submitSearch = (event) => {
+    event.preventDefault()
+    const query = search.trim()
+    navigate(query ? `/shop?q=${encodeURIComponent(query)}` : '/shop')
+  }
   return (
     <main>
       <section className="hero-section">
         <div className="hero-copy">
-          <div className="eyebrow"><span className="eyebrow-dot" /> YOUR NEIGHBOURHOOD PRAWN SHOP</div>
-          <h1>Good prawns.<br /><em>Good food.</em><br />Good mood.</h1>
-          <p>Freshly sourced prawns, cleaned just the way you like. At your door across Hyderabad.</p>
-          <div className="hero-cta"><Link to="/shop" className="button button-dark">Shop fresh prawns <ArrowRight size={17} /></Link><span className="delivery-note"><Truck size={16} /> Same-day slots available</span></div>
-          <div className="hero-rating"><div className="avatar-stack"><span>R</span><span>S</span><span>A</span><span>+</span></div><div><strong>Freshness you can taste</strong><small>Trusted by Hyderabad home cooks</small></div></div>
+          <div className="eyebrow"><span className="eyebrow-dot" /> FRESH PRAWNS · HYDERABAD</div>
+          <h1>Bring home<br /><em>a better catch.</em></h1>
+          <p>Pick your prawns, choose cleaned or uncleaned, and find the right size for dinner.</p>
+          <form className="hero-search" role="search" onSubmit={submitSearch}>
+            <Search size={19} aria-hidden="true" />
+            <label className="sr-only" htmlFor="home-product-search">Search prawns</label>
+            <input id="home-product-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search prawns or size" />
+            <button type="submit" aria-label="Search catalogue"><ArrowRight size={19} /></button>
+          </form>
+          <div className="hero-cta">
+            <Link to="/shop" className="button button-dark">Shop today's catch <ArrowRight size={17} /></Link>
+            <span className="delivery-note"><MapPin size={16} /> Hyderabad delivery</span>
+          </div>
+          <nav className="hero-quick-cats" aria-label="Shop by prawn size">
+            <span>Popular sizes</span>
+            <Link to="/shop?size=Small">Small</Link>
+            <Link to="/shop?size=Medium">Medium</Link>
+            <Link to="/shop?size=Large">Large</Link>
+          </nav>
         </div>
         <div className="hero-visual">
           <img src="https://images.unsplash.com/photo-1565680018434-b513d5e5fd47?auto=format&fit=crop&w=1100&q=85" alt="Fresh prawns ready to be prepared" />
-          <div className="hero-image-label"><span className="fresh-seal"><Fish size={20} /></span><span><strong>Fresh, not frozen</strong><small>Every order, every time</small></span></div>
-          <div className="hero-scribble">from our shop<br />to your table <ArrowDownRight size={25} /></div>
+          <div className="hero-image-label"><span className="fresh-seal"><Fish size={20} /></span><span><strong>Made your way</strong><small>Cleaned or uncleaned</small></span></div>
+          <span className="hero-photo-tag">FROM OUR SHOP TO YOUR TABLE</span>
         </div>
-        <div className="hero-background-note" aria-hidden="true">FRESH CATCH</div>
       </section>
 
       <section className="trust-strip" aria-label="Our service highlights">
-        <div><BadgeCheck /><span><b>Freshly sourced</b><small>Carefully picked daily</small></span></div>
-        <div><Sparkles /><span><b>Cleaned your way</b><small>Cleaned or uncleaned</small></span></div>
-        <div><Truck /><span><b>Hyderabad delivery</b><small>Our rider or delivery partner</small></span></div>
-        <div><Headset /><span><b>Real human support</b><small>We're happy to help</small></span></div>
+        <div><BadgeCheck /><span><b>One local shop</b><small>Personal service in Hyderabad</small></span></div>
+        <div><Fish /><span><b>Prepared your way</b><small>Cleaned or uncleaned</small></span></div>
+        <div><Truck /><span><b>Delivery choices</b><small>Shop rider or delivery partner</small></span></div>
       </section>
 
       <section className="section-block popular-section">
-        <SectionHeading eyebrow="THE GOOD STUFF" title="Straight from the sea" description="A few local favourites to get you started." action={<Link to="/shop" className="text-link">View all prawns <ArrowRight size={16} /></Link>} />
-        {products.some((product) => product.sampleData) && <p className="catalogue-sample-note" role="note">Sample catalogue data for local development. Prices and stock are illustrative.</p>}
+        <SectionHeading eyebrow="THE SHOP COUNTER" title="Today's catch" description="Browse available prawns, current prices and weights." action={<Link to="/shop" className="text-link">See the full shop <ArrowRight size={16} /></Link>} />
+        {products.some((product) => product.sampleData) && <p className="catalogue-sample-note" role="note">Some product prices and stock are sample values.</p>}
         {catalogueStatus !== 'ready'
           ? <CatalogueFeedback status={catalogueStatus} error={catalogueError} onRetry={onRetry} />
           : featured.length
@@ -389,11 +403,9 @@ function HomePage({ products, catalogueStatus, catalogueError, onRetry, onAdd })
       </section>
 
       <section id="our-promise" className="promise-section">
-        <div className="promise-photo"><img src="https://images.unsplash.com/photo-1579684947550-22e945225d9a?auto=format&fit=crop&w=1000&q=85" alt="A freshly prepared seafood dish" /><div className="photo-tag"><span>✳</span> GOOD FOOD STARTS HERE</div></div>
-        <div className="promise-copy"><div className="eyebrow">A LITTLE ABOUT US</div><h2>Small shop.<br /><em>Big on fresh.</em></h2><p>We’re a single-owner neighbourhood prawn shop serving Hyderabad. That means each order gets personal attention, fair daily prices, and a little extra care.</p><ul className="promise-list"><li><Check size={16} /> Picked fresh, packed with care</li><li><Check size={16} /> Cleaned or uncleaned — your call</li><li><Check size={16} /> Clear pricing, no surprises</li></ul><Link to="/shop" className="button button-outline">Meet your next meal <ArrowRight size={16} /></Link></div>
+        <div className="promise-photo"><img src="https://images.unsplash.com/photo-1579684947550-22e945225d9a?auto=format&fit=crop&w=1000&q=85" alt="A freshly prepared seafood dish" /></div>
+        <div className="promise-copy"><div className="eyebrow">ABOUT THE SHOP</div><h2>Your local prawn shop.</h2><p>Fresh Prawns Online is a single-owner shop serving Hyderabad. Choose your prawns and how you want them prepared; we’ll arrange delivery.</p></div>
       </section>
-
-      <section className="quote-band"><span className="quote-mark">“</span><p>We believe the best meals begin with really good ingredients.</p><span className="quote-byline">FRESH PRAWNS ONLINE · HYDERABAD</span></section>
       <SupportSection />
     </main>
   )
@@ -414,31 +426,54 @@ function CatalogueFeedback({ status, error, onRetry }) {
 }
 
 function ProductCard({ product, onAdd }) {
-  const canQuickAdd = product.availableGrams >= 500
-    && product.pricePerKg !== null
-    && product.preparationOptions.some((option) => option.type === 'uncleaned' && option.enabled)
+  const quickPreparation = product.preparationOptions.find((option) => option.type === 'uncleaned' && option.enabled)
+    || product.preparationOptions.find((option) => option.type === 'cleaned' && option.enabled)
+  const canQuickAdd = product.availableGrams >= 500 && product.pricePerKg !== null && Boolean(quickPreparation)
+  const preparationLabel = quickPreparation?.type === 'cleaned' ? 'cleaned' : 'uncleaned'
   return (
     <article className="product-card">
-      <Link to={`/product/${product.id}`} className="product-photo">{product.image && <img src={product.image} alt={product.name} />}<span className="product-badge">{product.badge}</span><span className="quick-view"><Search size={15} /> Quick view</span></Link>
+      <Link to={`/product/${product.id}`} className="product-photo" aria-label={`View ${product.name}`}>
+        {product.image && <img src={product.image} alt={product.name} />}
+        <span className="product-photo-badge"><Sparkles size={13} /> Shop pick</span>
+      </Link>
       <div className="product-card-body">
         <div className="product-meta"><span>{product.size}</span><span className={`availability ${product.availableGrams < 500 ? 'unavailable' : ''}`}><i />{product.availableGrams >= 500 ? 'In stock' : 'Unavailable'}</span></div>
         <h3><Link to={`/product/${product.id}`}>{product.name}</Link></h3>
         <p>{product.description}</p>
-        <div className="product-card-bottom"><div><strong>{product.pricePerKg === null ? 'Price updating' : money(product.pricePerKg)}</strong>{product.pricePerKg !== null && <small> / kg</small>}</div><button className="icon-add" type="button" aria-label={`Add ${product.name} to cart`} disabled={!canQuickAdd} onClick={() => onAdd(product, false, 500)}><Plus size={19} /></button></div>
-        <div className="product-card-hint">Add 500 g · uncleaned</div>
+        <div className="product-card-bottom">
+          <div><strong>{product.pricePerKg === null ? 'Price updating' : money(product.pricePerKg)}</strong>{product.pricePerKg !== null && <small> / kg</small>}</div>
+          <Link className="product-details-link" to={`/product/${product.id}`}>Details <ArrowRight size={15} /></Link>
+        </div>
+        <button className="product-quick-add" type="button" disabled={!canQuickAdd} onClick={() => onAdd(product, quickPreparation.type === 'cleaned', 500)}>
+          <ShoppingBag size={16} /> {canQuickAdd ? `Quick add · 500 g ${preparationLabel}` : 'Currently unavailable'}
+        </button>
       </div>
     </article>
   )
 }
 
 function ShopPage({ products, catalogueStatus, catalogueError, onRetry, onAdd }) {
-  const [search, setSearch] = useState('')
-  const [filter, setFilter] = useState('All prawns')
+  const [searchParams] = useSearchParams()
   const categories = ['All prawns', 'Small', 'Medium', 'Large']
-  const visible = products.filter((p) => p.active && p.name.toLowerCase().includes(search.toLowerCase()) && (filter === 'All prawns' || p.size.toLowerCase() === filter.toLowerCase()))
-  return <main className="page-main"><div className="page-title-row"><div><div className="eyebrow">FROM OUR COUNTER TO YOUR KITCHEN</div><h1>Shop prawns</h1><p>Fresh picks for whatever you're cooking up.</p></div><span className="catalogue-count">{products.filter((product) => product.active).length} fresh picks</span></div>
-    {products.some((product) => product.sampleData) && <p className="catalogue-sample-note" role="note">Sample catalogue data for local development. Prices and stock are illustrative.</p>}
-    <div className="catalogue-tools"><div className="filter-pills" role="group" aria-label="Filter by prawn size">{categories.map((category) => <button key={category} className={filter === category ? 'filter-pill active' : 'filter-pill'} onClick={() => setFilter(category)} type="button">{category}</button>)}</div><label className="search-box"><Search size={17} /><span className="sr-only">Search prawns</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find your prawns..." /></label></div>
+  const [search, setSearch] = useState(() => searchParams.get('q') || '')
+  const [filter, setFilter] = useState(() => {
+    const size = searchParams.get('size')
+    return categories.includes(size) ? size : 'All prawns'
+  })
+  const normalizedSearch = search.trim().toLowerCase()
+  const visible = products.filter((product) => {
+    const searchableText = `${product.name} ${product.size} ${product.description}`.toLowerCase()
+    return product.active
+      && searchableText.includes(normalizedSearch)
+      && (filter === 'All prawns' || product.size.toLowerCase() === filter.toLowerCase())
+  })
+  return <main className="page-main"><div className="page-title-row"><div><div className="eyebrow">FROM OUR COUNTER TO YOUR KITCHEN</div><h1>Shop prawns</h1><p>Fresh picks for whatever you're cooking up.</p></div><span className="catalogue-count">{catalogueStatus === 'ready' ? `${products.filter((product) => product.active).length} fresh picks` : catalogueStatus === 'loading' ? 'Updating catalogue' : 'Catalogue unavailable'}</span></div>
+    {products.some((product) => product.sampleData) && <p className="catalogue-sample-note" role="note">Some product prices and stock are sample values.</p>}
+    <div className="catalogue-tools">
+      <div className="filter-pills" role="group" aria-label="Filter by prawn size">{categories.map((category) => <button key={category} className={filter === category ? 'filter-pill active' : 'filter-pill'} aria-pressed={filter === category} onClick={() => setFilter(category)} type="button">{category}</button>)}</div>
+      <div className="search-box"><Search size={17} aria-hidden="true" /><label className="sr-only" htmlFor="catalogue-search">Search prawns by name or size</label><input id="catalogue-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find prawns by name or size" />{search && <button className="search-clear" type="button" aria-label="Clear search" onClick={() => setSearch('')}><X size={15} /></button>}</div>
+    </div>
+    <p className="catalogue-result-count" aria-live="polite">{catalogueStatus === 'ready' ? `${visible.length} ${visible.length === 1 ? 'product' : 'products'} found` : catalogueStatus === 'loading' ? 'Loading the current catalogue' : 'The catalogue is temporarily unavailable'}</p>
     {catalogueStatus !== 'ready'
       ? <CatalogueFeedback status={catalogueStatus} error={catalogueError} onRetry={onRetry} />
       : visible.length
@@ -466,12 +501,12 @@ function ProductPage({ products, catalogueStatus, catalogueError, onRetry, onAdd
   const price = product.pricePerKg === null ? null : (product.pricePerKg * weight / 1000 + prepFee) * quantity
   const maxQuantity = Math.floor(product.availableGrams / weight)
   const handleAdd = () => onAdd(product, cleaned, weight, quantity)
-  return <main className="page-main detail-page"><Link to="/shop" className="back-link"><ArrowLeft size={16} /> Back to all prawns</Link>{product.sampleData && <p className="catalogue-sample-note" role="note">Sample product and pricing data for local development.</p>}<div className="detail-layout"><div className="detail-image">{product.image && <img src={product.image} alt={product.name} />}<span className="product-badge">{product.badge}</span><div className="image-caption"><BadgeCheck size={16} /> Freshly sourced for today's orders</div></div><div className="detail-info"><div className="eyebrow">{product.size} · {product.origin}</div><h1>{product.name}</h1><p className="detail-description">{product.longDescription || product.description}</p><div className="detail-price">{product.pricePerKg === null ? 'Price updating' : <>{money(product.pricePerKg)} <small>/ kg</small></>}<span className="price-date"><Clock3 size={13} /> Current shop price</span></div>
+  return <main className="page-main detail-page"><Link to="/shop" className="back-link"><ArrowLeft size={16} /> Back to all prawns</Link>{product.sampleData && <p className="catalogue-sample-note" role="note">Sample product. Price and stock may be illustrative.</p>}<div className="detail-layout"><div className="detail-image">{product.image && <img src={product.image} alt={product.name} />}</div><div className="detail-info"><div className="eyebrow">{product.size} · {product.origin}</div><h1>{product.name}</h1><p className="detail-description">{product.longDescription || product.description}</p><div className="detail-price">{product.pricePerKg === null ? 'Price updating' : <>{money(product.pricePerKg)} <small>/ kg</small></>}<span className="price-date"><Clock3 size={13} /> Price per kilogram</span></div>
       <div className="option-group"><div className="option-heading"><b>How would you like them?</b><span>Choose your prep</span></div><div className="prep-options"><button type="button" disabled={!uncleanedOption} onClick={() => setCleaned(false)} className={`prep-option ${!cleaned ? 'selected' : ''}`}><span className="option-radio" /><span><b>Uncleaned</b><small>As they come, fresh & whole</small></span><strong>Included</strong></button><button type="button" disabled={!cleanedOption} onClick={() => setCleaned(true)} className={`prep-option ${cleaned ? 'selected' : ''}`}><span className="option-radio" /><span><b>Cleaned</b><small>Deveined & ready to cook</small></span><strong>+{money(product.cleaningFee)}</strong></button></div></div>
       <div className="option-group"><div className="option-heading"><b>Pick your weight</b><span>{product.availableGrams ? `${formatWeight(product.availableGrams)} available` : 'Currently out of stock'}</span></div><div className="weight-options">{[250, 500, 1000].map((grams) => <button key={grams} type="button" disabled={grams > product.availableGrams} className={`weight-option ${weight === grams ? 'selected' : ''}`} onClick={() => { setWeight(grams); setQuantity(Math.min(quantity, Math.floor(product.availableGrams / grams))) }}>{grams >= 1000 ? '1 kg' : `${grams} g`}</button>)}</div></div>
       <div className="detail-buy-row"><div className="quantity-picker"><button type="button" aria-label="Decrease quantity" onClick={() => setQuantity(Math.max(1, quantity - 1))}><Minus size={15} /></button><span>{quantity}</span><button type="button" aria-label="Increase quantity" disabled={quantity >= maxQuantity} onClick={() => setQuantity(Math.min(maxQuantity, quantity + 1))}><Plus size={15} /></button></div><button type="button" className="button button-dark add-to-cart" disabled={!maxQuantity || !price || (cleaned && !cleanedOption) || (!cleaned && !uncleanedOption)} onClick={handleAdd}><ShoppingBag size={17} /> {price === null ? 'Price unavailable' : !maxQuantity ? 'Out of stock' : <>Add to cart · {money(price)}</>}</button></div>
       <div className="detail-delivery-note"><Truck size={17} /><span><b>Delivery across Hyderabad</b><small>Choose a delivery option at checkout · from ₹{deliveryFee}</small></span></div>
-    </div></div><section className="detail-bottom-note"><span>✳</span> Product, current price, preparation options and available weight are loaded from the shop API.</section></main>
+    </div></div></main>
 }
 
 function getLinePrice(item, product) {
@@ -481,8 +516,8 @@ function getLinePrice(item, product) {
 function CartPage({ cart, products, onChange }) {
   const lines = cart.map((item) => ({ ...item, product: products.find((product) => product.id === item.productId) })).filter((item) => item.product)
   const subtotal = lines.reduce((sum, item) => sum + getLinePrice(item, item.product), 0)
-  return <main className="page-main"><div className="eyebrow">YOUR LITTLE PRAWN HAUL</div><h1 className="page-heading">Your cart</h1>{!lines.length ? <div className="empty-state cart-empty"><ShoppingBag size={36} /><h2>Nothing in your basket yet</h2><p>Your next delicious meal is just a few clicks away.</p><Link to="/shop" className="button button-dark">Browse fresh prawns <ArrowRight size={16} /></Link></div> : <div className="cart-layout"><section className="cart-items"><div className="cart-column-heading"><span>ITEM</span><span>QUANTITY</span><span>SUBTOTAL</span></div>{lines.map((item) => <article className="cart-item" key={item.key}><Link to={`/product/${item.product.id}`} className="cart-item-image"><img src={item.product.image} alt="" /></Link><div className="cart-item-info"><Link to={`/product/${item.product.id}`}><b>{item.product.name}</b></Link><small>{item.cleaned ? 'Cleaned' : 'Uncleaned'} · {item.weight >= 1000 ? '1 kg' : `${item.weight} g`}</small><span>{money(item.product.pricePerKg)} / kg</span><button type="button" className="remove-link" onClick={() => onChange(item.key, -item.quantity)}>Remove</button></div><div className="quantity-picker cart-quantity"><button aria-label={`Decrease ${item.product.name} quantity`} onClick={() => onChange(item.key, -1)}><Minus size={14} /></button><span>{item.quantity}</span><button aria-label={`Increase ${item.product.name} quantity`} onClick={() => onChange(item.key, 1)}><Plus size={14} /></button></div><strong className="cart-line-price">{money(getLinePrice(item, item.product))}</strong></article>)}
-      <Link className="continue-shopping" to="/shop"><ArrowLeft size={16} /> Keep browsing</Link></section><aside className="order-summary"><h2>Order summary</h2><div className="summary-row"><span>Subtotal</span><b>{money(subtotal)}</b></div><div className="summary-row"><span>Delivery</span><span>Calculated next</span></div><div className="summary-total"><span>Total</span><strong>{money(subtotal)}</strong></div><p className="summary-disclaimer">Delivery fee and address are confirmed at checkout.</p><Link to="/checkout" className="button button-dark full-button">Continue to checkout <ArrowRight size={17} /></Link><div className="secure-note"><BadgeCheck size={15} /> No payment is collected in this demo</div></aside></div>}</main>
+  return <main className="page-main"><h1 className="page-heading">Your cart</h1>{!lines.length ? <div className="empty-state cart-empty"><ShoppingBag size={36} /><h2>Your cart is empty</h2><p>Add prawns to start an order.</p><Link to="/shop" className="button button-dark">Browse prawns <ArrowRight size={16} /></Link></div> : <div className="cart-layout"><section className="cart-items"><div className="cart-column-heading"><span>ITEM</span><span>QUANTITY</span><span>SUBTOTAL</span></div>{lines.map((item) => <article className="cart-item" key={item.key}><Link to={`/product/${item.product.id}`} className="cart-item-image"><img src={item.product.image} alt="" /></Link><div className="cart-item-info"><Link to={`/product/${item.product.id}`}><b>{item.product.name}</b></Link><small>{item.cleaned ? 'Cleaned' : 'Uncleaned'} · {item.weight >= 1000 ? '1 kg' : `${item.weight} g`}</small><span>{money(item.product.pricePerKg)} / kg</span><button type="button" className="remove-link" onClick={() => onChange(item.key, -item.quantity)}>Remove</button></div><div className="quantity-picker cart-quantity"><button aria-label={`Decrease ${item.product.name} quantity`} onClick={() => onChange(item.key, -1)}><Minus size={14} /></button><span>{item.quantity}</span><button aria-label={`Increase ${item.product.name} quantity`} onClick={() => onChange(item.key, 1)}><Plus size={14} /></button></div><strong className="cart-line-price">{money(getLinePrice(item, item.product))}</strong></article>)}
+      <Link className="continue-shopping" to="/shop"><ArrowLeft size={16} /> Keep browsing</Link></section><aside className="order-summary"><h2>Order summary</h2><div className="summary-row"><span>Subtotal</span><b>{money(subtotal)}</b></div><div className="summary-row"><span>Delivery</span><span>Calculated at checkout</span></div><div className="summary-total"><span>Total</span><strong>{money(subtotal)}</strong></div><p className="summary-disclaimer">Delivery fee is shown before you place the order.</p><Link to="/checkout" className="button button-dark full-button">Continue to checkout <ArrowRight size={17} /></Link><div className="secure-note"><BadgeCheck size={15} /> Pay on delivery</div></aside></div>}</main>
 }
 
 function AccountPage({ currentUser, authStatus, onAuthenticated, onSignOut }) {
@@ -569,7 +604,7 @@ function AccountPage({ currentUser, authStatus, onAuthenticated, onSignOut }) {
     return <main className="page-main account-page"><div className={`account-card ${currentUser.role === 'customer' ? 'account-dashboard' : ''}`}><div className="eyebrow">YOUR FRESH PRAWNS ACCOUNT</div><h1>Welcome back</h1><p>{currentUser.email}</p><p className="account-role">{currentUser.role === 'admin' ? 'Administrator account' : 'Customer account'}</p><div className="account-actions"><Link className="button button-dark" to={currentUser.role === 'admin' ? '/admin' : '/shop'}>{currentUser.role === 'admin' ? 'Open admin dashboard' : 'Continue shopping'} <ArrowRight size={16} /></Link>{currentUser.role === 'customer' && <Link className="button button-outline" to="/track"><PackageCheck size={16} /> Track orders</Link>}<button className="button button-outline" type="button" onClick={onSignOut}>Sign out</button></div></div></main>
   }
 
-  return <main className="page-main account-page"><div className="account-card"><div className="eyebrow">A SEAT AT OUR TABLE</div><h1>{mode === 'register' ? 'Create your account' : 'Welcome back'}</h1><p>{mode === 'register' ? 'Sign up to place and view your Hyderabad orders.' : 'Sign in to continue to checkout and your orders.'}</p><div className="account-mode" role="tablist" aria-label="Account action"><button type="button" role="tab" aria-selected={mode === 'login'} className={mode === 'login' ? 'active' : ''} onClick={() => { setMode('login'); setError('') }}>Sign in</button><button type="button" role="tab" aria-selected={mode === 'register'} className={mode === 'register' ? 'active' : ''} onClick={() => { setMode('register'); setError('') }}>Create account</button></div>{googleClientId ? <><div className="google-signin" aria-label={mode === 'register' ? 'Sign up with Google' : 'Sign in with Google'}><div ref={googleButtonRef} /></div><div className="account-divider"><span>or use email</span></div></> : <p className="account-note">Google sign-in is not configured yet. You can still use email and password.</p>}<form className="account-form" onSubmit={submit}><label>Email address<input name="email" type="email" autoComplete="email" maxLength="254" required /></label><label>Password<input name="password" type="password" autoComplete={mode === 'register' ? 'new-password' : 'current-password'} minLength="12" maxLength="128" required /><small>Use at least 12 characters.</small></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="button button-dark full-button" type="submit" disabled={busy}>{busy ? 'Please wait…' : mode === 'register' ? 'Create customer account' : 'Sign in'} <ArrowRight size={16} /></button></form><p className="account-note">Google sign-in creates a customer account or signs into the account with the same verified Google email. Admin access remains limited to provisioned administrator accounts.</p></div></main>
+  return <main className="page-main account-page"><div className="account-card"><h1>{mode === 'register' ? 'Create your account' : 'Sign in'}</h1><p>{mode === 'register' ? 'Create an account to place and track orders.' : 'Sign in to place an order or track your orders.'}</p><div className="account-mode" role="tablist" aria-label="Account action"><button type="button" role="tab" aria-selected={mode === 'login'} className={mode === 'login' ? 'active' : ''} onClick={() => { setMode('login'); setError('') }}>Sign in</button><button type="button" role="tab" aria-selected={mode === 'register'} className={mode === 'register' ? 'active' : ''} onClick={() => { setMode('register'); setError('') }}>Create account</button></div>{googleClientId ? <><div className="google-signin" aria-label={mode === 'register' ? 'Sign up with Google' : 'Sign in with Google'}><div ref={googleButtonRef} /></div><div className="account-divider"><span>or</span></div></> : <p className="account-note">Use your email and password to continue.</p>}<form className="account-form" onSubmit={submit}><label>Email address<input name="email" type="email" autoComplete="email" maxLength="254" required /></label><label>Password<input name="password" type="password" autoComplete={mode === 'register' ? 'new-password' : 'current-password'} minLength="12" maxLength="128" required /><small>At least 12 characters.</small></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="button button-dark full-button" type="submit" disabled={busy}>{busy ? 'Please wait…' : mode === 'register' ? 'Create account' : 'Sign in'} <ArrowRight size={16} /></button></form><p className="account-note">Admin accounts are created by the shop owner.</p></div></main>
 }
 
 function CustomerOrderHistory({ authToken }) {
@@ -700,12 +735,13 @@ function CheckoutPage({ cart, products, currentUser, authToken, onPlaceOrder }) 
   }
   if (!lines.length) return <main className="page-main empty-checkout"><div className="empty-state"><ShoppingBag size={35} /><h2>Your cart is waiting for prawns</h2><p>Add something fresh before heading to checkout.</p><Link to="/shop" className="button button-dark">Shop prawns <ArrowRight size={16} /></Link></div></main>
   if (!currentUser || currentUser.role !== 'customer') return <main className="page-main empty-checkout"><div className="empty-state"><ShoppingBag size={35} /><h2>{currentUser ? 'Customer checkout required' : 'Sign in before checkout'}</h2><p>Your cart will be here when you return. Orders require a customer account.</p><Link to="/account" state={{ from: '/checkout' }} className="button button-dark">{currentUser ? 'Switch account' : 'Sign in or create account'} <ArrowRight size={16} /></Link></div></main>
-  return <main className="page-main"><Link to="/cart" className="back-link"><ArrowLeft size={16} /> Back to cart</Link><div className="eyebrow">ALMOST THE GOOD PART</div><h1 className="page-heading">Checkout</h1><div className="checkout-layout"><form className="checkout-form" onSubmit={submit} onChange={() => { idempotencyKeyRef.current = null }}><section className="checkout-panel"><div className="form-section-title"><span>01</span><div><h2>Your details</h2><p>We'll use these to coordinate your delivery.</p></div></div><div className="form-grid"><label>Full name<input name="name" autoComplete="name" placeholder="e.g. Ananya Rao" required /></label><label>Mobile number<input name="phone" type="tel" autoComplete="tel" inputMode="tel" placeholder="+91 98765 43210" required /></label></div></section>
-      <section className="checkout-panel"><div className="form-section-title"><span>02</span><div><h2>Where should we deliver?</h2><p>Hyderabad delivery. Map and live location remain future integrations.</p></div></div><label className="full-label">Delivery address<textarea name="address" autoComplete="street-address" rows="3" placeholder="House / flat, street, Hyderabad" required /></label><div className="form-grid"><label>Area / locality<input name="locality" autoComplete="address-level2" placeholder="e.g. Banjara Hills" required /></label><label>PIN code<input name="postalCode" inputMode="numeric" pattern="[0-9]{6}" maxLength="6" placeholder="500034" required /></label></div><div className="location-placeholder"><div className="location-pin"><MapPin size={19} /></div><div><b>Choose a delivery location</b><small>Map and live location will be available in a future phase.</small></div><button type="button" className="location-disabled" disabled>Map coming soon</button></div></section>
-      <section className="checkout-panel"><div className="form-section-title"><span>03</span><div><h2>How should we get it to you?</h2><p>Choose a delivery method; no delivery provider is connected.</p></div></div><div className="delivery-options"><label className={`delivery-choice ${deliveryMethod === 'shop' ? 'selected' : ''}`}><input type="radio" name="delivery" checked={deliveryMethod === 'shop'} onChange={() => setDeliveryMethod('shop')} /><span className="delivery-icon"><Truck size={20} /></span><span><b>Our delivery person</b><small>Personal local delivery</small></span><strong>₹40 est.</strong></label><label className={`delivery-choice ${deliveryMethod === 'third_party' ? 'selected' : ''}`}><input type="radio" name="delivery" checked={deliveryMethod === 'third_party'} onChange={() => setDeliveryMethod('third_party')} /><span className="delivery-icon"><PackageCheck size={20} /></span><span><b>Delivery partner</b><small>Third-party service · not connected</small></span><strong>₹60 est.</strong></label></div></section>
-      <section className="checkout-panel"><div className="form-section-title"><span>04</span><div><h2>Payment</h2><p>Pay when your order is delivered. Online payments are not connected.</p></div></div><div className="payment-placeholder"><Banknote size={19} /><span><b>Pay on delivery</b><small>Your order remains unpaid until the shop records collection.</small></span><span className="demo-tag">AT DOOR</span></div></section>
-      {submitError && <p className="form-error" role="alert">{submitError}</p>}<button type="submit" disabled={submitting} className="button button-dark full-button place-order">{submitting ? 'Placing order…' : `Place order · ${money(total)} est.`} <ArrowRight size={17} /></button><p className="checkout-legal">The API recalculates all prices and reserves stock. Payment and delivery integrations are not enabled.</p></form>
-    <aside className="order-summary checkout-summary"><h2>Your order</h2>{lines.map((item) => <div className="summary-product" key={item.key}><img src={item.product.image} alt="" /><span><b>{item.product.name}</b><small>{item.cleaned ? 'Cleaned' : 'Uncleaned'} · {item.weight >= 1000 ? '1 kg' : `${item.weight} g`} × {item.quantity}</small></span><strong>{money(getLinePrice(item, item.product))}</strong></div>)}<div className="summary-row"><span>Subtotal estimate</span><b>{money(subtotal)}</b></div><div className="summary-row"><span>Delivery estimate</span><b>{money(delivery)}</b></div><div className="summary-total"><span>Total estimate</span><strong>{money(total)}</strong></div><div className="checkout-summary-note"><BadgeCheck size={15} /> Final total is calculated by the server</div></aside></div></main>
+  return <main className="page-main"><Link to="/cart" className="back-link"><ArrowLeft size={16} /> Back to cart</Link><h1 className="page-heading">Checkout</h1><div className="checkout-layout"><form className="checkout-form" onSubmit={submit} onChange={() => { idempotencyKeyRef.current = null }}><section className="checkout-panel"><div className="form-section-title"><div><h2>Your details</h2><p>Delivery contact information.</p></div></div><div className="form-grid"><label>Full name<input name="name" autoComplete="name" placeholder="e.g. Ananya Rao" required /></label><label>Mobile number<input name="phone" type="tel" autoComplete="tel" inputMode="tel" placeholder="+91 98765 43210" required /></label></div></section>
+      <section className="checkout-panel"><div className="form-section-title"><div><h2>Delivery address</h2><p>Delivery is currently available in Hyderabad.</p></div></div><label className="full-label">Address<textarea name="address" autoComplete="street-address" rows="3" placeholder="House / flat, street, Hyderabad" required /></label><div className="form-grid"><label>Area / locality<input name="locality" autoComplete="address-level2" placeholder="e.g. Banjara Hills" required /></label><label>PIN code<input name="postalCode" inputMode="numeric" pattern="[0-9]{6}" maxLength="6" placeholder="500034" required /></label></div></section>
+      <div className="location-placeholder"><div className="location-pin"><MapPin size={19} /></div><div><b>Choose a delivery location</b><small>Map and live location will be available in a future phase.</small></div><button type="button" className="location-disabled" disabled>Map coming soon</button></div>
+      <section className="checkout-panel"><div className="form-section-title"><div><h2>Delivery method</h2><p>Select who will deliver your order.</p></div></div><div className="delivery-options"><label className={`delivery-choice ${deliveryMethod === 'shop' ? 'selected' : ''}`}><input type="radio" name="delivery" checked={deliveryMethod === 'shop'} onChange={() => setDeliveryMethod('shop')} /><span className="delivery-icon"><Truck size={20} /></span><span><b>Our delivery person</b><small>Shop-arranged delivery</small></span><strong>₹40 est.</strong></label><label className={`delivery-choice ${deliveryMethod === 'third_party' ? 'selected' : ''}`}><input type="radio" name="delivery" checked={deliveryMethod === 'third_party'} onChange={() => setDeliveryMethod('third_party')} /><span className="delivery-icon"><PackageCheck size={20} /></span><span><b>Delivery partner</b><small>Arranged by the shop</small></span><strong>₹60 est.</strong></label></div></section>
+      <section className="checkout-panel"><div className="form-section-title"><div><h2>Payment</h2></div></div><div className="payment-placeholder"><Banknote size={19} /><span><b>Pay on delivery</b><small>Payment is collected when your order arrives.</small></span></div></section>
+      {submitError && <p className="form-error" role="alert">{submitError}</p>}<button type="submit" disabled={submitting} className="button button-dark full-button place-order">{submitting ? 'Placing order…' : `Place order · ${money(total)} est.`} <ArrowRight size={17} /></button></form>
+    <aside className="order-summary checkout-summary"><h2>Your order</h2>{lines.map((item) => <div className="summary-product" key={item.key}><img src={item.product.image} alt="" /><span><b>{item.product.name}</b><small>{item.cleaned ? 'Cleaned' : 'Uncleaned'} · {item.weight >= 1000 ? '1 kg' : `${item.weight} g`} × {item.quantity}</small></span><strong>{money(getLinePrice(item, item.product))}</strong></div>)}<div className="summary-row"><span>Subtotal estimate</span><b>{money(subtotal)}</b></div><div className="summary-row"><span>Delivery estimate</span><b>{money(delivery)}</b></div><div className="summary-total"><span>Total estimate</span><strong>{money(total)}</strong></div><div className="checkout-summary-note"><BadgeCheck size={15} /> Pay on delivery</div></aside></div></main>
 }
 
 function TrackPage({ order, authToken, currentUser }) {
@@ -758,12 +794,13 @@ function TrackPage({ order, authToken, currentUser }) {
   }, [trackedOrderId, authToken])
   const shownOrder = hasSearched
     ? (loadedOrder?.orderId === trackedOrderId ? loadedOrder : foundOrder)
-    : (loadedOrder?.orderId === trackedOrderId ? loadedOrder : order?.orderId === trackedOrderId ? order : loadedOrder || order)
+    : (loadedOrder?.orderId === trackedOrderId ? loadedOrder : order?.orderId === trackedOrderId ? order : null)
   const orderEvents = eventsState.orderId === shownOrder?.orderId ? eventsState.events : []
   const eventsError = eventsState.orderId === shownOrder?.orderId ? eventsState.error : ''
   const searchOrders = async (event) => {
     event.preventDefault()
     setHasSearched(true)
+    setFoundOrder(null)
     setLookupError('')
     if (!authToken) {
       setLookupError('Sign in to find your orders.')
@@ -772,10 +809,10 @@ function TrackPage({ order, authToken, currentUser }) {
     setLookupBusy(true)
     try {
       const { data } = await apiRequest('/api/v1/orders', { token: authToken })
-      const match = data.find((item) => item.id.toLowerCase() === lookup.trim().toLowerCase()
-        || `fp-${item.id.slice(-6)}`.toLowerCase() === lookup.trim().toLowerCase())
+      const query = lookup.trim().toLowerCase()
+      const match = data.find((item) => item.id.toLowerCase() === query
+        || `fp-${item.id.slice(-6)}`.toLowerCase() === query)
       if (!match) {
-        setFoundOrder(null)
         setLookupError('No matching order was found in your account.')
         return
       }
@@ -789,21 +826,22 @@ function TrackPage({ order, authToken, currentUser }) {
   const steps = ['Confirmed', 'Processing', 'Out for delivery', 'Delivered']
   const statusSteps = { pending: 0, confirmed: 0, preparing: 1, out_for_delivery: 2, delivered: 3 }
   const stage = statusSteps[shownOrder?.status] ?? statusSteps[String(shownOrder?.status || '').toLowerCase()] ?? -1
-  return <main className="page-main tracking-page"><div className="eyebrow">A LITTLE PEACE OF MIND</div><h1 className="page-heading">{currentUser?.role === 'customer' ? 'Track your orders' : 'Track your order'}</h1><p className="tracking-intro">We'll keep you in the loop, from our counter to your door.</p>
+  return <main className="page-main tracking-page"><h1 className="page-heading">{currentUser?.role === 'customer' ? 'Track your orders' : 'Track your order'}</h1><p className="tracking-intro">View order status, delivery details and updates.</p>
     {currentUser?.role === 'customer' && <CustomerOrderHistory key={currentUser.id || currentUser.email} authToken={authToken} />}
-    {currentUser?.role !== 'customer' && <><form className="tracking-search" onSubmit={searchOrders}><label htmlFor="order-lookup">Order number</label><div><input id="order-lookup" value={lookup} onChange={(event) => setLookup(event.target.value)} placeholder="e.g. FP-123456" /><button className="button button-dark" type="submit" disabled={lookupBusy}>{lookupBusy ? 'Searching…' : 'Find order'} <ArrowRight size={16} /></button></div><small>Sign in with the customer account that placed the order.</small></form>{lookupError && <p className="form-error" role="alert">{lookupError}</p>}</>}
+    {currentUser?.role !== 'customer' && <><form className="tracking-search" onSubmit={searchOrders}><label htmlFor="order-lookup">Order number</label><div><input id="order-lookup" value={lookup} onChange={(event) => setLookup(event.target.value)} placeholder="e.g. FP-123456" required /><button className="button button-dark" type="submit" disabled={lookupBusy}>{lookupBusy ? 'Searching…' : 'Find order'} <ArrowRight size={16} /></button></div><small>Sign in with the customer account that placed the order.</small></form>{lookupError && <p className="form-error" role="alert">{lookupError}</p>}</>}
     {!currentUser?.role && !shownOrder && <div className="tracking-empty"><div className="tracking-empty-icon"><PackageCheck size={29} /></div><h2>Sign in to track your orders</h2><p>Your order list is linked securely to your customer account.</p><Link to="/account" className="button button-dark">Sign in or create an account <ArrowRight size={16} /></Link></div>}
-    {shownOrder && <section className="tracking-card"><div className="tracking-card-head"><div><span className="status-pill"><i /> {shownOrder.status === 'pending' ? 'Pending' : shownOrder.status === 'preparing' ? 'Processing' : shownOrder.status}</span><h2>Order {shownOrder.id}</h2><p>Placed {shownOrder.createdAt}</p></div><strong>{money(shownOrder.total)}</strong></div><div className="tracking-steps">{steps.map((step, index) => <div className={`tracking-step ${index <= stage ? 'completed' : ''}`} key={step}><span className="tracking-step-icon">{index <= stage ? <Check size={15} /> : index === 1 ? <Fish size={15} /> : index === 2 ? <Truck size={15} /> : <PackageCheck size={15} />}</span><b>{step}</b>{index < steps.length - 1 && <span className="tracking-step-line" />}</div>)}</div><div className="tracking-order-meta"><div><MapPin size={16} /><span><b>Delivering to</b><small>{shownOrder.address || 'Hyderabad'}</small></span></div><div><Truck size={16} /><span><b>Delivery method</b><small>{shownOrder.deliveryMethod === 'partner' ? 'Third-party service' : 'Our delivery person'}</small></span></div><div><PackageCheck size={16} /><span><b>Delivery status</b><small>{deliveryStatusLabel(shownOrder.delivery?.status)}</small></span></div><div><Banknote size={16} /><span><b>Payment</b><small>{shownOrder.paymentMethodLabel} · {shownOrder.paymentStatusLabel}</small></span></div>{shownOrder.delivery?.method === 'shop' && shownOrder.delivery.personName && <div><Headset size={16} /><span><b>Delivery contact</b><small>{shownOrder.delivery.personName}{shownOrder.delivery.personPhone ? ` · ${shownOrder.delivery.personPhone}` : ''}</small></span></div>}{shownOrder.delivery?.method === 'third_party' && (shownOrder.delivery.serviceName || shownOrder.delivery.reference) && <div><PackageCheck size={16} /><span><b>Delivery reference</b><small>{[shownOrder.delivery.serviceName, shownOrder.delivery.reference].filter(Boolean).join(' · ')}</small></span></div>}</div><section className="order-event-history" aria-labelledby="customer-order-events"><h3 id="customer-order-events">Order updates</h3>{eventsError && <p className="form-error" role="alert">{eventsError}</p>}{orderEvents.length ? <ol>{orderEvents.map((item) => <li key={item.id}><b>{item.type.replaceAll('_', ' ')}</b><small>{item.from && item.to ? `${item.from.replaceAll('_', ' ')} → ${item.to.replaceAll('_', ' ')}` : item.to?.replaceAll('_', ' ')}</small><time dateTime={item.createdAt}>{new Date(item.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</time></li>)}</ol> : !eventsError && <p>No updates recorded yet.</p>}</section><p className="tracking-demo">Order status refreshes automatically while this page is open.</p></section>}
+    {currentUser?.role === 'admin' && <div className="tracking-empty"><h2>Orders are managed in the admin dashboard.</h2><Link to="/admin" className="button button-outline">Open admin dashboard <ArrowRight size={16} /></Link></div>}
+    {shownOrder && <section className="tracking-card"><div className="tracking-card-head"><div><span className="status-pill"><i /> {shownOrder.status === 'pending' ? 'Pending' : shownOrder.status === 'preparing' ? 'Processing' : shownOrder.status}</span><h2>Order {shownOrder.id}</h2><p>Placed {shownOrder.createdAt}</p></div><strong>{money(shownOrder.total)}</strong></div><div className="tracking-steps">{steps.map((step, index) => <div className={`tracking-step ${index <= stage ? 'completed' : ''}`} key={step}><span className="tracking-step-icon">{index <= stage ? <Check size={15} /> : index === 1 ? <Fish size={15} /> : index === 2 ? <Truck size={15} /> : <PackageCheck size={15} />}</span><b>{step}</b>{index < steps.length - 1 && <span className="tracking-step-line" />}</div>)}</div><div className="tracking-order-meta"><div><MapPin size={16} /><span><b>Delivering to</b><small>{shownOrder.address || 'Hyderabad'}</small></span></div><div><Truck size={16} /><span><b>Delivery method</b><small>{shownOrder.deliveryMethod === 'partner' ? 'Third-party service' : 'Our delivery person'}</small></span></div><div><PackageCheck size={16} /><span><b>Delivery status</b><small>{deliveryStatusLabel(shownOrder.delivery?.status)}</small></span></div><div><Banknote size={16} /><span><b>Payment</b><small>{shownOrder.paymentMethodLabel} · {shownOrder.paymentStatusLabel}</small></span></div>{shownOrder.delivery?.method === 'shop' && shownOrder.delivery.personName && <div><Headset size={16} /><span><b>Delivery contact</b><small>{shownOrder.delivery.personName}{shownOrder.delivery.personPhone ? ` · ${shownOrder.delivery.personPhone}` : ''}</small></span></div>}{shownOrder.delivery?.method === 'third_party' && (shownOrder.delivery.serviceName || shownOrder.delivery.reference) && <div><PackageCheck size={16} /><span><b>Delivery reference</b><small>{[shownOrder.delivery.serviceName, shownOrder.delivery.reference].filter(Boolean).join(' · ')}</small></span></div>}</div><section className="order-event-history" aria-labelledby="customer-order-events"><h3 id="customer-order-events">Order updates</h3>{eventsError && <p className="form-error" role="alert">{eventsError}</p>}{orderEvents.length ? <ol>{orderEvents.map((item) => <li key={item.id}><b>{item.type.replaceAll('_', ' ')}</b><small>{item.from && item.to ? `${item.from.replaceAll('_', ' ')} → ${item.to.replaceAll('_', ' ')}` : item.to?.replaceAll('_', ' ')}</small><time dateTime={item.createdAt}>{new Date(item.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</time></li>)}</ol> : !eventsError && <p>No updates recorded yet.</p>}</section></section>}
     <div className="tracking-support"><Headset size={18} /><span>Need a hand? <a href="tel:+919346338357">Call our shop at +91 93463 38357</a></span></div>
   </main>
 }
 
 function SupportSection() {
-  return <section id="contact" className="support-section"><div className="support-icon"><Headset size={24} /></div><div><div className="eyebrow">WE'RE RIGHT HERE</div><h2>Questions? Let's talk.</h2><p>Our little shop is always happy to help with your order.</p></div><div className="support-actions"><a className="button button-dark" href="tel:+919346338357">Call the shop <ArrowRight size={16} /></a><span>+91 93463 38357 · Hyderabad</span></div></section>
+  return <section id="contact" className="support-section"><div className="support-icon"><Headset size={24} /></div><div><h2>Need help?</h2><p>Call the shop about your order.</p></div><div className="support-actions"><a className="button button-dark" href="tel:+919346338357">Call +91 93463 38357 <ArrowRight size={16} /></a></div></section>
 }
 
 function Footer() {
-  return <footer className="site-footer"><div className="footer-main"><Link to="/" className="brand footer-brand"><span className="brand-mark"><Fish size={21} /></span><span className="brand-name">fresh<span>prawns</span><small>ONLINE · HYDERABAD</small></span></Link><p>Good prawns, good food, good mood.<br />A neighbourhood shop, with a little more convenience.</p><div className="footer-links"><Link to="/shop">Shop</Link><Link to="/track">Track orders</Link><Link to="/admin">Admin</Link></div></div><div className="footer-bottom"><span>© 2026 Fresh Prawns Online · Sample storefront for Phase 1</span><span>Made with care in Hyderabad <span className="footer-heart">♥</span></span></div></footer>
+  return <footer className="site-footer"><div className="footer-main"><Link to="/" className="brand footer-brand"><span className="brand-mark"><Fish size={21} /></span><span className="brand-name">fresh<span>prawns</span><small>ONLINE · HYDERABAD</small></span></Link><div className="footer-links"><Link to="/shop">Shop</Link><Link to="/track">Track orders</Link><Link to="/account">My account</Link></div></div><div className="footer-bottom"><span>© 2026 Fresh Prawns Online · Hyderabad</span></div></footer>
 }
 
 function AdminPage({ products, catalogueStatus, catalogueError, onRetry, currentUser, authToken, authStatus, onSignOut }) {
@@ -910,48 +948,31 @@ function AdminOverview({ products, catalogueStatus, catalogueError, onRetry, ord
     <>
       <div className="admin-page-heading">
         <div>
-          <div className="eyebrow">TODAY · HYDERABAD</div>
-          <h1>Good morning, shop owner <span>✳</span></h1>
-          <p>Recent orders and current catalogue data from the API.</p>
+          <h1>Overview</h1>
+          <p>Recent orders, products and stock.</p>
         </div>
-        <span className="demo-badge"><span /> API DATA</span>
       </div>
       <div className="metric-grid">
-        <Metric label="Recent order value" value={money(revenue)} change="latest orders" icon={<Banknote />} />
-        <Metric label="Recent orders" value={orders.length} change="latest API results" icon={<PackageCheck />} />
-        <Metric label="Active products" value={products.filter((product) => product.active).length} change={`${products.length} in catalogue`} icon={<Fish />} />
-        <Metric label="Avg. order value" value={money(orders.length ? revenue / orders.length : 0)} change="latest order average" icon={<ArrowDownRight />} />
+        <Metric label="Listed order value" value={money(revenue)} icon={<Banknote />} />
+        <Metric label="Recent orders" value={orders.length} icon={<PackageCheck />} />
+        <Metric label="Active products" value={products.filter((product) => product.active).length} icon={<Fish />} />
       </div>
       <div className="admin-overview-grid">
-        <section className="admin-card sales-card">
-          <div className="admin-card-heading">
-            <div><h2>Sales overview</h2><p>Daily sales · sample data</p></div>
-            <select aria-label="Sales chart period" defaultValue="7 days"><option>7 days</option><option>30 days</option></select>
-          </div>
-          <div className="sales-chart" role="img" aria-label="Sample sales trend chart">
-            <div className="chart-y-labels"><span>₹8k</span><span>₹6k</span><span>₹4k</span><span>₹2k</span><span>₹0</span></div>
-            <div className="chart-area">
-              <div className="chart-grid"><i /><i /><i /><i /><i /></div>
-              <div className="chart-bars">{[48, 62, 42, 75, 58, 88, 70].map((height, index) => <div className="chart-bar-column" key={index}><span className="chart-bar" style={{ height: `${height}%` }} title={`Sample sales: ${money(height * 86)}`} /><small>{['M', 'T', 'W', 'T', 'F', 'S', 'S'][index]}</small></div>)}</div>
-            </div>
-          </div>
-          <div className="chart-legend"><i /> Sales <span>Illustrative data only</span></div>
-        </section>
         <section className="admin-card">
           <div className="admin-card-heading">
-            <div><h2>Recent orders</h2><p>Latest activity from the shop</p></div>
-            <button className="admin-text-button" onClick={() => setTab('orders')}>View all <ArrowRight size={14} /></button>
+            <h2>Recent orders</h2>
+            <button className="admin-text-button" onClick={() => setTab('orders')}>View orders <ArrowRight size={14} /></button>
           </div>
-          <div className="recent-orders">{orders.slice(0, 4).map((order) => <button className="recent-order" key={order.id} onClick={() => setTab('orders')}><span className="order-mini-icon"><ShoppingBag size={16} /></span><span><b>{order.id}</b><small>{order.customer} · {order.time}</small></span><span className={`admin-status ${order.status.toLowerCase().replaceAll(' ', '-')}`}>{order.status}</span></button>)}</div>
+          {orders.length ? <div className="recent-orders">{orders.slice(0, 4).map((order) => <button className="recent-order" key={order.id} onClick={() => setTab('orders')}><span><b>{order.id}</b><small>{order.customer} · {order.time}</small></span><span className={`admin-status ${order.status.toLowerCase().replaceAll(' ', '-')}`}>{order.status}</span></button>)}</div> : <p className="admin-demo-hint">No orders yet.</p>}
         </section>
-      </div>
-      <div className="admin-card stock-glance">
-        <div className="admin-card-heading">
-          <div><h2>Stock at a glance</h2><p>Ready to sell by weight</p></div>
-          <button className="admin-text-button" onClick={() => setTab('products')}>Manage stock <ArrowRight size={14} /></button>
-        </div>
-        {catalogueStatus !== 'ready' && <CatalogueFeedback status={catalogueStatus} error={catalogueError} onRetry={onRetry} />}
-        {catalogueStatus === 'ready' && (products.length ? <StockGlance products={products} /> : <CatalogueFeedback status="empty" />)}
+        <section className="admin-card stock-glance">
+          <div className="admin-card-heading">
+            <h2>Available stock</h2>
+            <button className="admin-text-button" onClick={() => setTab('products')}>Manage stock <ArrowRight size={14} /></button>
+          </div>
+          {catalogueStatus !== 'ready' && <CatalogueFeedback status={catalogueStatus} error={catalogueError} onRetry={onRetry} />}
+          {catalogueStatus === 'ready' && (products.length ? <StockGlance products={products} /> : <CatalogueFeedback status="empty" />)}
+        </section>
       </div>
     </>
   )
@@ -964,8 +985,8 @@ function StockGlance({ products }) {
   })}</div>
 }
 
-function Metric({ label, value, change, icon }) {
-  return <div className="metric-card"><span className="metric-icon">{icon}</span><small>{label}</small><strong>{value}</strong><span className="metric-change">{change}</span></div>
+function Metric({ label, value, icon }) {
+  return <div className="metric-card"><span className="metric-icon">{icon}</span><small>{label}</small><strong>{value}</strong></div>
 }
 
 function AdminProducts({ products, catalogueStatus, catalogueError, onRetry, authToken }) {
@@ -1119,7 +1140,7 @@ function AdminProducts({ products, catalogueStatus, catalogueError, onRetry, aut
   const priceBySlug = new Map(products.map((product) => [product.slug, product]))
   return <>
     <div className="admin-page-heading">
-      <div><div className="eyebrow">YOUR CATCH, YOUR CALL</div><h1>Products & daily pricing</h1><p>Manage the catalogue, daily prices and stock using protected APIs.</p></div>
+      <div><h1>Products and pricing</h1><p>Manage products, daily prices and stock.</p></div>
     </div>
     {dataStatus === 'loading' && <p role="status">Loading management data…</p>}
     {dataStatus === 'error' && <p className="form-error" role="alert">{dataError}<button type="button" onClick={() => setReload((count) => count + 1)}> Try again</button></p>}
@@ -1189,7 +1210,7 @@ function AdminProducts({ products, catalogueStatus, catalogueError, onRetry, aut
         const price = priceBySlug.get(product.slug)
         return <tr key={product._id}><td><div className="table-product"><span><b>{product.name}</b><small>{product.size} · {product.origin}</small></span></div></td><td>{price?.pricePerKg === null || !price ? 'Not set' : money(price.pricePerKg)}</td><td>{formatWeight(stock?.onHandGrams || 0)}</td><td>{formatWeight(stock?.reservedGrams || 0)}</td><td>{formatWeight(stock?.availableGrams || 0)}</td><td>{product.active ? 'Active' : 'Inactive'}</td></tr>
       })}</tbody></table></div>
-      <div className="admin-table-footer"><Sparkles size={15} /> Each stock balance change and its audit movement are recorded atomically.</div>
+      <div className="admin-table-footer">Stock changes are recorded in the movement history.</div>
     </section>}
     {selectedProduct && <div className="admin-phase6-grid">
       <section className="admin-card products-table-card">
@@ -1212,9 +1233,8 @@ function AdminProducts({ products, catalogueStatus, catalogueError, onRetry, aut
         : products.length
           ? <div className="table-scroll"><table className="admin-table"><thead><tr><th>PRODUCT</th><th>PRICE / KG</th><th>AVAILABLE STOCK</th><th>AVAILABILITY</th><th>LIVE</th></tr></thead><tbody>{products.map((product) => <tr key={product.id}><td><div className="table-product">{product.image && <img src={product.image} alt="" />}<span><b>{product.name}</b><small>{product.size} · {product.origin}</small></span></div></td><td>{product.pricePerKg === null ? 'Not set' : money(product.pricePerKg)}</td><td>{formatWeight(product.availableGrams)}</td><td><span className={product.stockKg < 3 ? 'stock-status low' : 'stock-status'}><i />{product.stockKg === 0 ? 'Out of stock' : product.stockKg < 3 ? 'Low stock' : 'In stock'}</span></td><td><span>{product.active ? 'Active' : 'Inactive'}</span></td></tr>)}</tbody></table></div>
           : <CatalogueFeedback status="empty" />}
-      <div className="admin-table-footer"><Sparkles size={15} /> Price history is append-only; existing orders retain their recorded prices.</div>
+      <div className="admin-table-footer">Past orders keep their original prices.</div>
     </div>
-    <div className="admin-info-note"><BadgeCheck size={17} /><span><b>Admin-only writes.</b> All changes are validated and authorized by the API.</span></div>
   </>
 }
 
@@ -1291,12 +1311,11 @@ function AdminOrders({ orders, selectedOrder, setSelectedOrder, onUpdateOrder, s
   return <>
     {statusError && <p className="form-error" role="alert">{statusError}</p>}
     <div className="admin-page-heading">
-      <div><div className="eyebrow">THE GOOD STUFF IS MOVING</div><h1>Orders</h1><p>Recent orders from the API. Status changes are checked by the server.</p></div>
-      <span className="demo-badge"><span /> {orders.length} ORDERS</span>
+      <div><h1>Orders</h1><p>Review customer orders and update their status.</p></div>
     </div>
     <div className="orders-layout">
       <section className="admin-card orders-list-card">
-        <div className="admin-card-heading"><div><h2>All orders</h2><p>Select an order to view details</p></div></div>
+          <div className="admin-card-heading"><h2>All orders</h2></div>
         {orders.length
           ? <div className="order-list">{orders.map((order) => <button key={order.rawId} onClick={() => setSelectedOrder(order)} className={`order-list-item ${current?.rawId === order.rawId ? 'selected' : ''}`}><span className="order-list-avatar">{order.customer.split(' ').map((word) => word[0]).join('')}</span><span className="order-list-main"><b>{order.customer}</b><small>{order.id} · {order.time}</small></span><span className="order-list-end"><b>{money(order.total)}</b><small className={`admin-status ${order.status.toLowerCase().replaceAll(' ', '-')}`}>{order.status}</small></span></button>)}</div>
           : <p className="admin-demo-hint">No orders have been placed yet.</p>}
